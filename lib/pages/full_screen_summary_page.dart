@@ -96,7 +96,7 @@ class _FullScreenSummaryPageState extends State<FullScreenSummaryPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Summary"),
+        title: const Text("Abstract"),
         actions: [
           if (isSpeaking)
             IconButton(
@@ -152,6 +152,10 @@ class _FullScreenSummaryPageState extends State<FullScreenSummaryPage> {
             padding: const EdgeInsets.only(top: 10.0, left: 20.0, right: 20.0),
             child: Paper.containsLatex(summaryText)
                 ? TeXView(
+                    loadingWidgetBuilder: (context) => SelectableText(
+                      summaryText,
+                      style: const TextStyle(fontSize: 17.0),
+                    ),
                     child: TeXViewDocument(
                       summaryText,
                       style: TeXViewStyle(

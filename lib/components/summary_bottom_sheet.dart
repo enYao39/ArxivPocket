@@ -93,7 +93,7 @@ class _SummaryBottomSheetState extends State<SummaryBottomSheet> {
     final summaryText = widget.paperData.summary;
     final colorScheme = Theme.of(context).colorScheme;
     return AppBottomSheetShell(
-      title: "Summary",
+      title: "Abstract",
       maxHeightFactor: 0.55,
       actions: [
           if (isSpeaking)
@@ -159,6 +159,10 @@ class _SummaryBottomSheetState extends State<SummaryBottomSheet> {
         children: [
           Paper.containsLatex(summaryText)
               ? TeXView(
+                  loadingWidgetBuilder: (context) => SelectableText(
+                    summaryText,
+                    style: const TextStyle(fontSize: 15.0),
+                  ),
                   child: TeXViewDocument(
                     summaryText,
                     style: TeXViewStyle(

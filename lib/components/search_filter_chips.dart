@@ -9,11 +9,13 @@ class SearchFilterChips extends StatefulWidget {
     required this.currentQuery,
     required this.onCategorySelected,
     required this.onClearCategory,
+    this.selectedCategory,
   });
 
   final String currentQuery;
   final ValueChanged<ArxivCategory> onCategorySelected;
   final Future<void> Function() onClearCategory;
+  final ArxivCategory? selectedCategory;
 
   @override
   State<SearchFilterChips> createState() => _SearchFilterChipsState();
@@ -25,8 +27,14 @@ class _SearchFilterChipsState extends State<SearchFilterChips> {
   @override
   void didUpdateWidget(SearchFilterChips oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final oldActive = categoryFromSearchInput(oldWidget.currentQuery)?.code;
-    final newActive = categoryFromSearchInput(widget.currentQuery)?.code;
+    final oldActive =
+        (oldWidget.selectedCategory ??
+                categoryFromSearchInput(oldWidget.currentQuery))
+            ?.code;
+    final newActive =
+        (widget.selectedCategory ??
+                categoryFromSearchInput(widget.currentQuery))
+            ?.code;
     if (oldActive != newActive) {
       _scrollToStart();
     }
@@ -52,7 +60,10 @@ class _SearchFilterChipsState extends State<SearchFilterChips> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final filterCategories = visibleFilterCategories(widget.currentQuery);
+    final filterCategories = visibleFilterCategories(
+      widget.currentQuery,
+      selectedCategory: widget.selectedCategory,
+    );
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(10.0, 0.0, 10.0, 8.0),
@@ -78,11 +89,16 @@ class _SearchFilterChipsState extends State<SearchFilterChips> {
                 final category = filterCategories[index];
                 return CategoryFilterChip(
                   label: categoryChipLabel(category),
-                  selected: isCategorySelected(category, widget.currentQuery),
+                  selected: isCategorySelected(
+                    category,
+                    widget.currentQuery,
+                    selectedCategory: widget.selectedCategory,
+                  ),
                   onTap: () async {
                     await handleCategoryChipTap(
                       category: category,
                       currentQuery: widget.currentQuery,
+                      selectedCategory: widget.selectedCategory,
                       onCategorySelected: widget.onCategorySelected,
                       onClearCategory: widget.onClearCategory,
                     );

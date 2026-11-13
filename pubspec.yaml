@@ -41,12 +41,12 @@ dependencies:
     path_provider: ^2.1.4
     syncfusion_flutter_pdfviewer: ^33.2.8
     ionicons_plus: ^0.2.5
-    share_plus: ^7.2.2
+    share_plus: ^13.3.1
     # permission_handler: ^11.3.1
     hive: ^2.2.3
     hive_flutter: ^1.1.0
     liquid_pull_to_refresh: ^3.0.1
-    flutter_tts: ^4.0.2
+    flutter_tts: ^4.2.5
     theme_provider: ^0.6.0
     flutter_tex: ^4.0.9
     google_generative_ai: ^0.4.5
@@ -56,7 +56,7 @@ dependencies:
     another_flutter_splash_screen: ^1.2.1
     lottie: ^3.1.2
     photo_view: ^0.15.0
-    dynamic_color: ^1.8.1
+    dynamic_color: ^2.1.0
 dev_dependencies:
     flutter_test:
         sdk: flutter
@@ -104,14 +104,14 @@ flutter:
         - assets/system_message_templates/
         - assets/icon/
         - assets/animation/
-        - assets/banners/OpenScholarXIV.png
-        - assets/banners/OpenScholarXIV2.png
-        - assets/banners/OpenScholarXIV3.png
-        - assets/banners/OpenScholarXIV4.png
-        - assets/banners/OpenScholarXIV5.png
-        - assets/banners/OpenScholarXIV6.png
-        - assets/banners/OpenScholarXIV7.png
-        - assets/banners/OpenScholarXIV8.png
+        - assets/banners/OpenScholarXIV.webp
+        - assets/banners/OpenScholarXIV2.webp
+        - assets/banners/OpenScholarXIV3.webp
+        - assets/banners/OpenScholarXIV4.webp
+        - assets/banners/OpenScholarXIV5.webp
+        - assets/banners/OpenScholarXIV6.webp
+        - assets/banners/OpenScholarXIV7.webp
+        - assets/banners/OpenScholarXIV8.webp
 
     # An image asset can refer to one or more resolution-specific "variants", see
     # https://flutter.dev/assets-and-images/#resolution-aware

@@ -4,10 +4,12 @@ import 'package:arxiv/models/paper.dart';
 import 'package:arxiv/models/paper_note.dart';
 import 'package:arxiv/services/author_parser.dart';
 import 'package:arxiv/services/citation_formatter.dart';
+import 'package:arxiv/services/main_page_style_store.dart';
 import 'package:arxiv/services/paper_notes_store.dart';
 import 'package:arxiv/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 enum _CitationMenuAction { bibtex, apa, link }
 
@@ -39,6 +41,7 @@ class _PaperDetailPageState extends State<PaperDetailPage> {
   bool _hasUnsavedChanges = false;
   bool _isApplyingStoredNote = false;
   bool _isEditingNote = true;
+  bool _authorsExpanded = false;
   int _notesRefreshToken = 0;
 
   @override
@@ -143,6 +146,15 @@ class _PaperDetailPageState extends State<PaperDetailPage> {
     ).showSnackBar(const SnackBar(content: Text("Note deleted")));
   }
 
+  Future<void> _copyText(String label, String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text("$label copied")));
+  }
+
   Future<void> _copyCitation(_CitationMenuAction action) async {
     final citation = switch (action) {
       _CitationMenuAction.bibtex => CitationFormatter.bibtex(widget.paper),
@@ -156,12 +168,7 @@ class _PaperDetailPageState extends State<PaperDetailPage> {
       _CitationMenuAction.link => "arXiv link",
     };
 
-    await Clipboard.setData(ClipboardData(text: citation));
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text("$label copied")));
+    await _copyText(label, citation);
   }
 
   List<PopupMenuEntry<_CitationMenuAction>> _buildCitationMenuItems() {
@@ -185,44 +192,97 @@ class _PaperDetailPageState extends State<PaperDetailPage> {
     Navigator.popUntil(context, (route) => route.isFirst);
   }
 
+  Future<void> _searchCategory(String categoryCode) async {
+    final trimmed = categoryCode.trim();
+    if (trimmed.isEmpty) return;
+
+    await widget.onSearchQuerySelected("cat:$trimmed");
+    if (!mounted) return;
+
+    Navigator.popUntil(context, (route) => route.isFirst);
+  }
+
   Widget _buildAuthorChips() {
     final authors = AuthorParser.authorsForPaper(widget.paper);
     if (authors.isEmpty) return const SizedBox.shrink();
 
     final colorScheme = Theme.of(context).colorScheme;
 
-    return Container(
-      margin: const EdgeInsets.fromLTRB(8.0, 4.0, 8.0, 8.0),
-      padding: const EdgeInsets.all(14.0),
-      decoration: BoxDecoration(
-        color: subtleSurfaceColor(colorScheme),
-        borderRadius: BorderRadius.circular(10.0),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            "Authors",
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+    return ValueListenableBuilder<MainPageStyleSettings>(
+      valueListenable: MainPageStyleStore.notifier,
+      builder: (context, styleSettings, _) {
+        final maxAuthors = styleSettings.maxAuthors;
+        final canFold =
+            styleSettings.limitAuthors && authors.length > maxAuthors;
+        final visibleAuthors = canFold && !_authorsExpanded
+            ? authors.take(maxAuthors).toList()
+            : authors;
+        final hiddenCount = authors.length - visibleAuthors.length;
+
+        return Container(
+          margin: const EdgeInsets.fromLTRB(8.0, 4.0, 8.0, 8.0),
+          padding: const EdgeInsets.all(14.0),
+          decoration: BoxDecoration(
+            color: subtleSurfaceColor(colorScheme),
+            borderRadius: BorderRadius.circular(10.0),
           ),
-          const SizedBox(height: 10.0),
-          Wrap(
-            spacing: 8.0,
-            runSpacing: 8.0,
-            children: authors
-                .map(
-                  (author) => ActionChip(
-                    label: Text(author),
-                    avatar: const Icon(Icons.person_search_outlined, size: 18),
-                    onPressed: () => _searchAuthor(author),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      "Authors (${authors.length})",
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
-                )
-                .toList(),
+                  if (canFold)
+                    TextButton.icon(
+                      onPressed: () {
+                        setState(() => _authorsExpanded = !_authorsExpanded);
+                      },
+                      icon: Icon(
+                        _authorsExpanded
+                            ? Icons.expand_less
+                            : Icons.expand_more,
+                        size: 18.0,
+                      ),
+                      label: Text(_authorsExpanded ? "Show less" : "Show all"),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10.0),
+              Wrap(
+                spacing: 8.0,
+                runSpacing: 8.0,
+                children: [
+                  ...visibleAuthors.map(
+                    (author) => ActionChip(
+                      label: Text(author),
+                      avatar: const Icon(
+                        Icons.person_search_outlined,
+                        size: 18,
+                      ),
+                      onPressed: () => _searchAuthor(author),
+                    ),
+                  ),
+                  if (hiddenCount > 0)
+                    ActionChip(
+                      label: Text("+$hiddenCount more"),
+                      avatar: const Icon(Icons.expand_more, size: 18),
+                      onPressed: () {
+                        setState(() => _authorsExpanded = true);
+                      },
+                    ),
+                ],
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -259,14 +319,23 @@ class _PaperDetailPageState extends State<PaperDetailPage> {
           value: _formatMetadataDate(widget.paper.updatedAt),
         ),
       if (_otherCategories.isNotEmpty)
-        _MetadataChipRow(label: "Other categories", values: _otherCategories),
+        _MetadataChipRow(
+          label: "Other categories",
+          values: _otherCategories,
+          onChipTap: _searchCategory,
+        ),
       if (widget.paper.abstractUrl.trim().isNotEmpty)
         _MetadataValueRow(
           label: "Abstract link",
           value: widget.paper.abstractUrl,
+          onTap: () => _copyText("Abstract link", widget.paper.abstractUrl),
         ),
       if (widget.paper.pdfUrl.trim().isNotEmpty)
-        _MetadataValueRow(label: "PDF link", value: widget.paper.pdfUrl),
+        _MetadataValueRow(
+          label: "PDF link",
+          value: widget.paper.pdfUrl,
+          onTap: () => _copyText("PDF link", widget.paper.pdfUrl),
+        ),
     ];
 
     return Container(
@@ -293,6 +362,66 @@ class _PaperDetailPageState extends State<PaperDetailPage> {
             )
           else
             ...rows,
+        ],
+      ),
+    );
+  }
+
+  String get _baseArxivId =>
+      widget.paper.id.trim().replaceFirst(RegExp(r'v\d+$'), '');
+
+  Future<void> _openExternalLink(String url) async {
+    final uri = Uri.parse(url);
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Widget _buildReferencesPanel() {
+    final baseId = _baseArxivId;
+    if (baseId.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final colorScheme = Theme.of(context).colorScheme;
+    final links = <(String label, String url)>[
+      ("INSPIRE HEP", "https://inspirehep.net/arxiv/$baseId"),
+      ("NASA ADS", "https://ui.adsabs.harvard.edu/abs/arXiv:$baseId"),
+      (
+        "Google Scholar",
+        "https://scholar.google.com/scholar_lookup?arxiv_id=$baseId",
+      ),
+      ("Semantic Scholar", "https://api.semanticscholar.org/arXiv:$baseId"),
+    ];
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(8.0, 4.0, 8.0, 8.0),
+      padding: const EdgeInsets.all(14.0),
+      decoration: BoxDecoration(
+        color: subtleSurfaceColor(colorScheme),
+        borderRadius: BorderRadius.circular(10.0),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "References & Citations",
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 10.0),
+          Wrap(
+            spacing: 8.0,
+            runSpacing: 8.0,
+            children: links
+                .map(
+                  (entry) => ActionChip(
+                    avatar: const Icon(Icons.open_in_new, size: 16.0),
+                    label: Text(entry.$1),
+                    onPressed: () => _openExternalLink(entry.$2),
+                  ),
+                )
+                .toList(),
+          ),
         ],
       ),
     );
@@ -452,10 +581,12 @@ class _PaperDetailPageState extends State<PaperDetailPage> {
             downloadPaper: widget.downloadPaper,
             parseAndLaunchURL: widget.parseAndLaunchURL,
             isBookmarked: false,
+            onCategoryTap: _searchCategory,
             notesRefreshToken: _notesRefreshToken,
           ),
           _buildAuthorChips(),
           _buildMetadataPanel(),
+          _buildReferencesPanel(),
           _buildNotesSection(),
         ],
       ),
@@ -464,44 +595,91 @@ class _PaperDetailPageState extends State<PaperDetailPage> {
 }
 
 class _MetadataValueRow extends StatelessWidget {
-  const _MetadataValueRow({required this.label, required this.value});
+  const _MetadataValueRow({
+    required this.label,
+    required this.value,
+    this.onTap,
+  });
 
   final String label;
   final String value;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return Padding(
+    final content = Padding(
       padding: const EdgeInsets.only(bottom: 10.0),
-      child: Column(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: colorScheme.onSurfaceVariant,
-              fontSize: 12.0,
-              fontWeight: FontWeight.w700,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 12.0,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2.0),
+                onTap != null
+                    ? Text(
+                        value,
+                        style: TextStyle(
+                          color: colorScheme.primary,
+                          fontSize: 13.0,
+                        ),
+                      )
+                    : SelectableText(
+                        value,
+                        style: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontSize: 13.0,
+                        ),
+                      ),
+              ],
             ),
           ),
-          const SizedBox(height: 2.0),
-          SelectableText(
-            value,
-            style: TextStyle(color: colorScheme.onSurface, fontSize: 13.0),
-          ),
+          if (onTap != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 8.0, top: 6.0),
+              child: Icon(
+                Icons.copy_rounded,
+                size: 16.0,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
         ],
       ),
+    );
+
+    if (onTap == null) {
+      return content;
+    }
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(6.0),
+      onTap: onTap,
+      child: content,
     );
   }
 }
 
 class _MetadataChipRow extends StatelessWidget {
-  const _MetadataChipRow({required this.label, required this.values});
+  const _MetadataChipRow({
+    required this.label,
+    required this.values,
+    this.onChipTap,
+  });
 
   final String label;
   final List<String> values;
+  final ValueChanged<String>? onChipTap;
 
   @override
   Widget build(BuildContext context) {
@@ -526,12 +704,20 @@ class _MetadataChipRow extends StatelessWidget {
             runSpacing: 6.0,
             children: values
                 .map(
-                  (value) => Chip(
-                    visualDensity: VisualDensity.compact,
-                    label: Text(value),
-                    backgroundColor: colorScheme.surfaceContainerHighest,
-                    side: BorderSide(color: colorScheme.outlineVariant),
-                  ),
+                  (value) => onChipTap == null
+                      ? Chip(
+                          visualDensity: VisualDensity.compact,
+                          label: Text(value),
+                          backgroundColor: colorScheme.surfaceContainerHighest,
+                          side: BorderSide(color: colorScheme.outlineVariant),
+                        )
+                      : ActionChip(
+                          visualDensity: VisualDensity.compact,
+                          label: Text(value),
+                          backgroundColor: colorScheme.surfaceContainerHighest,
+                          side: BorderSide(color: colorScheme.outlineVariant),
+                          onPressed: () => onChipTap!(value),
+                        ),
                 )
                 .toList(),
           ),

@@ -6,10 +6,10 @@ import 'package:arxiv/components/id_and_date.dart';
 import 'package:arxiv/components/summary_bottom_sheet.dart';
 import 'package:arxiv/models/paper.dart';
 import 'package:arxiv/pages/ai_chat_page.dart';
+import 'package:arxiv/services/main_page_style_store.dart';
 import 'package:arxiv/services/paper_notes_store.dart';
 import 'package:arxiv/theme/app_theme.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_tex/flutter_tex.dart';
 import 'package:hive/hive.dart';
 import 'package:ionicons_plus/ionicons_plus.dart';
 import 'package:share_plus/share_plus.dart';
@@ -22,6 +22,7 @@ class EachPaperCard extends StatefulWidget {
     required this.downloadPaper,
     required this.isBookmarked,
     this.onCardTap,
+    this.onCategoryTap,
     this.notesRefreshToken = 0,
   });
 
@@ -30,6 +31,7 @@ class EachPaperCard extends StatefulWidget {
   final Function parseAndLaunchURL;
   final bool isBookmarked;
   final VoidCallback? onCardTap;
+  final ValueChanged<String>? onCategoryTap;
   final int notesRefreshToken;
 
   @override
@@ -234,6 +236,7 @@ class _EachPaperCardState extends State<EachPaperCard> {
                 id: widget.eachPaper.id,
                 date: widget.eachPaper.publishedAt,
                 primaryCategory: primaryCategory(),
+                onCategoryTap: widget.onCategoryTap,
               ),
 
               // TITLE
@@ -244,27 +247,13 @@ class _EachPaperCardState extends State<EachPaperCard> {
                 ),
                 child: Container(
                   padding: const EdgeInsets.only(bottom: 5.0),
-                  child: Paper.containsLatex(title)
-                      ? TeXView(
-                          child: TeXViewDocument(
-                            title,
-                            style: TeXViewStyle(
-                              contentColor: colorScheme.onSurface,
-                              textAlign: TeXViewTextAlign.left,
-                              fontStyle: TeXViewFontStyle(
-                                fontSize: 16,
-                                fontWeight: TeXViewFontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        )
-                      : Text(
-                          title,
-                          style: const TextStyle(
-                            fontSize: 16.0,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                  child: Text(
+                    Paper.formatTitleForDisplay(title),
+                    style: const TextStyle(
+                      fontSize: 16.0,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
               ),
 
@@ -277,9 +266,18 @@ class _EachPaperCardState extends State<EachPaperCard> {
               ),
               Padding(
                 padding: const EdgeInsets.only(bottom: 10.0),
-                child: Text(
-                  "Authors: ${widget.eachPaper.authors}",
-                  style: const TextStyle(fontSize: 13.0),
+                child: ValueListenableBuilder<MainPageStyleSettings>(
+                  valueListenable: MainPageStyleStore.notifier,
+                  builder: (context, styleSettings, _) {
+                    final displayAuthors = MainPageStyleStore.formatAuthors(
+                      widget.eachPaper,
+                      styleSettings,
+                    );
+                    return Text(
+                      "Authors: $displayAuthors",
+                      style: const TextStyle(fontSize: 13.0),
+                    );
+                  },
                 ),
               ),
 
@@ -306,7 +304,7 @@ class _EachPaperCardState extends State<EachPaperCard> {
                           borderRadius: BorderRadius.circular(20.0),
                         ),
                         child: Text(
-                          "Summary",
+                          "Abstract",
                           style: TextStyle(
                             color: colorScheme.onPrimaryContainer,
                             fontWeight: FontWeight.bold,

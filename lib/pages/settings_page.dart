@@ -1,4 +1,5 @@
 import "package:arxiv/pages/how_to_use.dart";
+import "package:arxiv/services/main_page_style_store.dart";
 import "package:arxiv/theme/app_theme.dart";
 import "package:flutter/material.dart";
 import "package:hive/hive.dart";
@@ -40,7 +41,216 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     loadToolsSetting();
+    MainPageStyleStore().ensureLoaded();
   }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final currentTheme = ThemeProvider.themeOf(context);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text("Settings")),
+      body: ListView(
+        padding: const EdgeInsets.all(12.0),
+        children: [
+          _SettingsSectionLabel(
+            label: "Interface",
+            color: colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(height: 8.0),
+          _SettingsActionTile(
+            icon: Icons.palette_outlined,
+            title: "Appearance",
+            subtitle: currentTheme.description,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const AppearanceSettingsPage(),
+                ),
+              );
+            },
+          ),
+          ValueListenableBuilder<MainPageStyleSettings>(
+            valueListenable: MainPageStyleStore.notifier,
+            builder: (context, styleSettings, _) {
+              final subtitle = styleSettings.limitAuthors
+                  ? "Authors limited to ${styleSettings.maxAuthors}"
+                  : "Show all authors";
+              return _SettingsActionTile(
+                icon: Icons.view_agenda_outlined,
+                title: "Main Page Style",
+                subtitle: subtitle,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const MainPageStyleSettingsPage(),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+          const SizedBox(height: 18.0),
+          _SettingsSectionLabel(
+            label: "AI Chat",
+            color: colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(height: 8.0),
+          _SettingsSwitchTile(
+            icon: Icons.auto_fix_high_outlined,
+            title: "Message tools",
+            subtitle: "Enables Speak, Copy, and Share for AI replies.",
+            value: toolsOn,
+            onChanged: saveToolsSetting,
+          ),
+          const SizedBox(height: 18.0),
+          _SettingsSectionLabel(
+            label: "Help",
+            color: colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(height: 8.0),
+          _SettingsActionTile(
+            icon: Icons.help_outline,
+            title: "How to Use",
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const HowToUsePage()),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class MainPageStyleSettingsPage extends StatefulWidget {
+  const MainPageStyleSettingsPage({super.key});
+
+  @override
+  State<MainPageStyleSettingsPage> createState() =>
+      _MainPageStyleSettingsPageState();
+}
+
+class _MainPageStyleSettingsPageState extends State<MainPageStyleSettingsPage> {
+  final MainPageStyleStore _store = MainPageStyleStore();
+  static const _authorLimitOptions = [3, 5, 8];
+
+  @override
+  void initState() {
+    super.initState();
+    _store.ensureLoaded();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text("Main Page Style")),
+      body: ValueListenableBuilder<MainPageStyleSettings>(
+        valueListenable: MainPageStyleStore.notifier,
+        builder: (context, settings, _) {
+          return ListView(
+            padding: const EdgeInsets.all(12.0),
+            children: [
+              _SettingsSectionLabel(
+                label: "Authors",
+                color: colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(height: 8.0),
+              _SettingsSwitchTile(
+                icon: Icons.people_outline,
+                title: "Limit displayed authors",
+                subtitle: settings.limitAuthors
+                    ? "Hides extra authors when a paper has more than ${settings.maxAuthors}."
+                    : "Shows the full author list on main page cards.",
+                value: settings.limitAuthors,
+                onChanged: (value) {
+                  _store.save(settings.copyWith(limitAuthors: value));
+                },
+              ),
+              if (settings.limitAuthors)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14.0,
+                    vertical: 12.0,
+                  ),
+                  decoration: BoxDecoration(
+                    color: subtleSurfaceColor(colorScheme),
+                    borderRadius: BorderRadius.circular(10.0),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "Max visible authors",
+                        style: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 8.0),
+                      Wrap(
+                        spacing: 8.0,
+                        children: _authorLimitOptions.map((count) {
+                          final selected = settings.maxAuthors == count;
+                          return ChoiceChip(
+                            label: Text("$count"),
+                            selected: selected,
+                            onSelected: (_) {
+                              _store.save(settings.copyWith(maxAuthors: count));
+                            },
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 18.0),
+              _SettingsSectionLabel(
+                label: "Startup",
+                color: colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(height: 8.0),
+              _SettingsSwitchTile(
+                icon: Icons.history,
+                title: "Reopen last session",
+                subtitle: settings.restoreSearchFilter
+                    ? "Restores your last category, search filter, sort order, and page on launch."
+                    : "Restores your last category, sort order, and page size on launch.",
+                value: settings.restoreLastSession,
+                onChanged: (value) {
+                  _store.save(settings.copyWith(restoreLastSession: value));
+                },
+              ),
+              if (settings.restoreLastSession) ...[
+                const SizedBox(height: 10.0),
+                _SettingsSwitchTile(
+                  icon: Icons.manage_search,
+                  title: "Also restore search filter",
+                  subtitle:
+                      "Keep your previous search query, advanced filters, and page offset on launch.",
+                  value: settings.restoreSearchFilter,
+                  onChanged: (value) {
+                    _store.save(settings.copyWith(restoreSearchFilter: value));
+                  },
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class AppearanceSettingsPage extends StatelessWidget {
+  const AppearanceSettingsPage({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -52,7 +262,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final themes = controller.allThemes;
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Settings")),
+      appBar: AppBar(title: const Text("Appearance")),
       body: ListView(
         padding: const EdgeInsets.all(12.0),
         children: [
@@ -89,35 +299,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 theme: theme,
                 selected: theme.id == selectedThemeId,
                 onSelected: () => controller.setTheme(theme.id),
-              );
-            },
-          ),
-          const SizedBox(height: 18.0),
-          _SettingsSectionLabel(
-            label: "AI Chat",
-            color: colorScheme.onSurfaceVariant,
-          ),
-          const SizedBox(height: 8.0),
-          _SettingsSwitchTile(
-            icon: Icons.auto_fix_high_outlined,
-            title: "Message tools",
-            subtitle: "Enables Speak, Copy, and Share for AI replies.",
-            value: toolsOn,
-            onChanged: saveToolsSetting,
-          ),
-          const SizedBox(height: 18.0),
-          _SettingsSectionLabel(
-            label: "Help",
-            color: colorScheme.onSurfaceVariant,
-          ),
-          const SizedBox(height: 8.0),
-          _SettingsActionTile(
-            icon: Icons.help_outline,
-            title: "How to Use",
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const HowToUsePage()),
               );
             },
           ),
@@ -265,11 +446,13 @@ class _SettingsActionTile extends StatelessWidget {
   const _SettingsActionTile({
     required this.icon,
     required this.title,
+    this.subtitle,
     required this.onTap,
   });
 
   final IconData icon;
   final String title;
+  final String? subtitle;
   final VoidCallback onTap;
 
   @override
@@ -283,12 +466,27 @@ class _SettingsActionTile extends StatelessWidget {
           Icon(icon, color: colorScheme.onSurfaceVariant),
           const SizedBox(width: 12.0),
           Expanded(
-            child: Text(
-              title,
-              style: TextStyle(
-                color: colorScheme.onSurface,
-                fontWeight: FontWeight.w500,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: colorScheme.onSurface,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                if (subtitle != null && subtitle!.isNotEmpty) ...[
+                  const SizedBox(height: 2.0),
+                  Text(
+                    subtitle!,
+                    style: TextStyle(
+                      color: colorScheme.onSurfaceVariant,
+                      fontSize: 12.0,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
           Icon(Icons.chevron_right, color: colorScheme.onSurfaceVariant),

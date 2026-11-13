@@ -62,14 +62,10 @@ class Paper {
     return Paper(
       id,
       _parseLatex(
-        _readText(
-          jsonData["title"],
-        ).replaceAll(RegExp(r'\\n'), '').replaceAll(RegExp(r'\\ '), ''),
+        _readText(jsonData["title"]).trim().replaceAll(RegExp(r'\s+'), ' '),
       ),
       _parseLatex(
-        _readText(
-          jsonData["summary"],
-        ).trim().replaceAll(RegExp(r'\\n'), ' ').replaceAll(RegExp(r'\\'), ''),
+        _readText(jsonData["summary"]).trim().replaceAll(RegExp(r'\s+'), ' '),
       ),
       _dateOnly(_readText(jsonData["published"])),
       _parseAuthors(jsonData["author"]),
@@ -118,13 +114,112 @@ class Paper {
   }
 
   static String _parseLatex(String content) {
-    if (containsLatex(content)) {
-      return content
-          .replaceAll(RegExp(r'\$ '), r' \) ')
-          .replaceAll(RegExp(r' \$'), r' \( ')
-          .replaceAll(r'$', r' \) ');
+    if (!containsLatex(content)) {
+      return content;
     }
-    return content;
+    var parsed = content.replaceAllMapped(
+      RegExp(r'(?<!\\)\$\$(.+?)(?<!\\)\$\$', dotAll: true),
+      (match) => '\\[${match.group(1)}\\]',
+    );
+    parsed = parsed.replaceAllMapped(
+      RegExp(r'(?<!\\)\$(.+?)(?<!\\)\$', dotAll: true),
+      (match) => '\\(${match.group(1)}\\)',
+    );
+    return parsed;
+  }
+
+  static const Map<String, String> _latexSymbolReplacements = {
+    r'\times': '×',
+    r'\cdot': '·',
+    r'\pm': '±',
+    r'\mp': '∓',
+    r'\sim': '∼',
+    r'\simeq': '≃',
+    r'\approx': '≈',
+    r'\leq': '≤',
+    r'\le': '≤',
+    r'\geq': '≥',
+    r'\ge': '≥',
+    r'\neq': '≠',
+    r'\ne': '≠',
+    r'\infty': '∞',
+    r'\rightarrow': '→',
+    r'\to': '→',
+    r'\leftarrow': '←',
+    r'\leftrightarrow': '↔',
+    r'\alpha': 'α',
+    r'\beta': 'β',
+    r'\gamma': 'γ',
+    r'\delta': 'δ',
+    r'\varepsilon': 'ε',
+    r'\epsilon': 'ε',
+    r'\zeta': 'ζ',
+    r'\eta': 'η',
+    r'\vartheta': 'θ',
+    r'\theta': 'θ',
+    r'\iota': 'ι',
+    r'\kappa': 'κ',
+    r'\lambda': 'λ',
+    r'\mu': 'μ',
+    r'\nu': 'ν',
+    r'\xi': 'ξ',
+    r'\pi': 'π',
+    r'\rho': 'ρ',
+    r'\sigma': 'σ',
+    r'\tau': 'τ',
+    r'\upsilon': 'υ',
+    r'\varphi': 'φ',
+    r'\phi': 'φ',
+    r'\chi': 'χ',
+    r'\psi': 'ψ',
+    r'\omega': 'ω',
+    r'\Gamma': 'Γ',
+    r'\Delta': 'Δ',
+    r'\Theta': 'Θ',
+    r'\Lambda': 'Λ',
+    r'\Xi': 'Ξ',
+    r'\Pi': 'Π',
+    r'\Sigma': 'Σ',
+    r'\Phi': 'Φ',
+    r'\Psi': 'Ψ',
+    r'\Omega': 'Ω',
+  };
+
+  /// Converts inline LaTeX delimiters and common math commands into readable text
+  /// for plain-text title widgets.
+  static String formatTitleForDisplay(String title) {
+    if (!containsLatex(title)) {
+      return title;
+    }
+
+    var formatted = title
+        .replaceAll(r'\(', '')
+        .replaceAll(r'\)', '')
+        .replaceAll(r'\[', '')
+        .replaceAll(r'\]', '')
+        .replaceAll(r'\$', '\x00DOLLAR\x00')
+        .replaceAll(r'$', '')
+        .replaceAll('\x00DOLLAR\x00', r'$');
+
+    formatted = formatted.replaceAllMapped(
+      RegExp(r'\\(?:mathrm|rm|text|mathbf|mathit|mathcal|mathsf)\{([^}]*)\}'),
+      (match) => match.group(1) ?? '',
+    );
+
+    formatted = formatted.replaceAllMapped(
+      RegExp(r'\\[a-zA-Z]+'),
+      (match) => _latexSymbolReplacements[match.group(0)] ?? match.group(0)!,
+    );
+
+    formatted = formatted
+        .replaceAll(r'\,', ' ')
+        .replaceAll(r'\ ', ' ')
+        .replaceAll('{', '')
+        .replaceAll('}', '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    return formatted;
   }
 
   static String _dateOnly(String value) {

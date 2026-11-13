@@ -164,6 +164,19 @@ void main() {
         grouped['Computer Science']!.any((category) => category.code == 'cs.AI'),
         isTrue,
       );
+      expect(grouped['Astrophysics']?.length, 6);
+      expect(
+        grouped['Astrophysics']!.any((category) => category.code == 'astro-ph.GA'),
+        isTrue,
+      );
+      expect(
+        grouped['Physics']!.any((category) => category.code == 'gr-qc'),
+        isTrue,
+      );
+      expect(
+        grouped['Condensed Matter']!.any((category) => category.code == 'cond-mat.supr-con'),
+        isTrue,
+      );
     });
   });
 
@@ -248,6 +261,42 @@ void main() {
 
     test('categoryFilterLabel combines code and human label', () {
       expect(categoryFilterLabel(category), 'cs.LG - Machine Learning');
+    });
+  });
+
+  group('combineCategoryAndQuery', () {
+    const category = ArxivCategory(
+      code: 'cs.LG',
+      label: 'Machine Learning',
+      group: 'Computer Science',
+    );
+
+    test('returns category query when keyword query is empty', () {
+      expect(
+        combineCategoryAndQuery(category: category, query: ''),
+        'cat:cs.LG',
+      );
+    });
+
+    test('combines category filter with free-text query', () {
+      expect(
+        combineCategoryAndQuery(category: category, query: 'transformer'),
+        'cat:cs.LG AND (all:transformer)',
+      );
+    });
+
+    test('combines category filter with field-prefixed query', () {
+      expect(
+        combineCategoryAndQuery(category: category, query: 'au:Vaswani'),
+        'cat:cs.LG AND (au:Vaswani)',
+      );
+    });
+
+    test('passes through query unchanged when category is null', () {
+      expect(
+        combineCategoryAndQuery(category: null, query: 'transformer'),
+        'transformer',
+      );
     });
   });
 }

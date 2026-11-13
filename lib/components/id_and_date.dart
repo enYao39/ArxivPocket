@@ -7,11 +7,13 @@ class IDAndDate extends StatefulWidget {
     required this.id,
     required this.date,
     required this.primaryCategory,
+    this.onCategoryTap,
   });
 
   final String id;
   final String date;
   final String primaryCategory;
+  final ValueChanged<String>? onCategoryTap;
 
   @override
   State<IDAndDate> createState() => _IDAndDateState();
@@ -37,13 +39,35 @@ class _IDAndDateState extends State<IDAndDate> {
             ),
           ),
           if (widget.primaryCategory.isNotEmpty)
-            Text(
-              "Category: ${widget.primaryCategory}",
-              style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontSize: 12.0,
-              ),
-            ),
+            widget.onCategoryTap == null
+                ? Text(
+                    "Category: ${widget.primaryCategory}",
+                    style: TextStyle(
+                      color: colorScheme.onSurfaceVariant,
+                      fontSize: 12.0,
+                    ),
+                  )
+                : GestureDetector(
+                    onTap: () => widget.onCategoryTap!(widget.primaryCategory),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7.0,
+                        vertical: 2.0,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primaryContainer.withAlpha(140),
+                        borderRadius: BorderRadius.circular(10.0),
+                      ),
+                      child: Text(
+                        widget.primaryCategory,
+                        style: TextStyle(
+                          color: colorScheme.primary,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
         ],
       ),
     );

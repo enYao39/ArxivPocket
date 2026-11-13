@@ -63,9 +63,36 @@ String effectiveSearchQuery(String input) {
   return input.trim();
 }
 
-List<ArxivCategory> visibleFilterCategories(String currentQuery) {
+/// Combines an optional active [category] filter with free-text or field [query].
+String combineCategoryAndQuery({
+  ArxivCategory? category,
+  required String query,
+}) {
+  final effective = effectiveSearchQuery(query);
+  if (category == null) {
+    return effective;
+  }
+  if (effective.isEmpty) {
+    return category.query;
+  }
+  if (RegExp(r'^cat:', caseSensitive: false).hasMatch(effective)) {
+    return effective;
+  }
+  final hasFieldPrefix = RegExp(
+    r'^(all|ti|au|abs|co|jr|rn|id):',
+    caseSensitive: false,
+  ).hasMatch(effective);
+  final queryPart = hasFieldPrefix ? effective : 'all:$effective';
+  return '${category.query} AND ($queryPart)';
+}
+
+List<ArxivCategory> visibleFilterCategories(
+  String currentQuery, {
+  ArxivCategory? selectedCategory,
+}) {
   final featured = featuredArxivCategories();
-  final activeCategory = categoryFromSearchInput(currentQuery);
+  final activeCategory =
+      selectedCategory ?? categoryFromSearchInput(currentQuery);
   if (activeCategory == null) {
     return featured;
   }
@@ -85,8 +112,13 @@ Map<String, List<ArxivCategory>> groupedArxivCategories() {
   return groups;
 }
 
-bool isCategorySelected(ArxivCategory category, String currentQuery) {
-  final activeCategory = categoryFromSearchInput(currentQuery);
+bool isCategorySelected(
+  ArxivCategory category,
+  String currentQuery, {
+  ArxivCategory? selectedCategory,
+}) {
+  final activeCategory =
+      selectedCategory ?? categoryFromSearchInput(currentQuery);
   return activeCategory?.code == category.code;
 }
 
@@ -94,10 +126,15 @@ bool isCategorySelected(ArxivCategory category, String currentQuery) {
 Future<void> handleCategoryChipTap({
   required ArxivCategory category,
   required String currentQuery,
+  ArxivCategory? selectedCategory,
   required void Function(ArxivCategory category) onCategorySelected,
   required Future<void> Function() onClearCategory,
 }) async {
-  if (isCategorySelected(category, currentQuery)) {
+  if (isCategorySelected(
+    category,
+    currentQuery,
+    selectedCategory: selectedCategory,
+  )) {
     await onClearCategory();
     return;
   }

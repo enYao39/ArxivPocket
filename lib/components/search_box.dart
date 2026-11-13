@@ -1,4 +1,5 @@
 // ignore_for_file: file_names
+import 'package:arxiv/apis/arxiv.dart';
 import 'package:arxiv/components/category_picker_sheet.dart';
 import 'package:arxiv/data/arxiv_categories.dart';
 import 'package:arxiv/theme/app_theme.dart';
@@ -9,20 +10,26 @@ class SearchBox extends StatelessWidget {
     super.key,
     required this.searchTermController,
     required this.searchFunction,
-    required this.toggleSortOrder,
-    required this.sortOrderNewest,
+    required this.sortOption,
+    required this.onSortOptionChanged,
     required this.onCategorySelected,
+    this.onClearCategory,
+    this.onOpenAdvancedSearch,
+    this.selectedCategory,
   });
 
   final TextEditingController searchTermController;
   final Future<void> Function({bool? resetPagination}) searchFunction;
-  final Future<void> Function() toggleSortOrder;
-  final bool sortOrderNewest;
+  final ArxivSortOption sortOption;
+  final Future<void> Function(ArxivSortOption option) onSortOptionChanged;
   final ValueChanged<ArxivCategory> onCategorySelected;
+  final Future<void> Function()? onClearCategory;
+  final VoidCallback? onOpenAdvancedSearch;
+  final ArxivCategory? selectedCategory;
 
   Future<void> clearSearchQuery() async {
     searchTermController.clear();
-    // Empty input reloads suggested papers instead of running a blank search.
+    // Empty input reloads suggested papers (or active category) instead of running a blank search.
     await searchFunction(resetPagination: true);
   }
 
@@ -30,6 +37,12 @@ class SearchBox extends StatelessWidget {
     showCategoryPickerSheet(
       context,
       currentQuery: searchTermController.text.trim(),
+      selectedCategory: selectedCategory,
+      onClearCategory: onClearCategory == null
+          ? null
+          : () {
+              onClearCategory!();
+            },
       onCategorySelected: onCategorySelected,
     );
   }
@@ -57,7 +70,9 @@ class SearchBox extends StatelessWidget {
                 cursorColor: colorScheme.primary,
                 style: TextStyle(color: colorScheme.onSurface),
                 decoration: InputDecoration(
-                  hintText: "Search...",
+                  hintText: selectedCategory != null
+                      ? "Search in ${selectedCategory!.code}..."
+                      : "Search, author, or arXiv ID/URL...",
                   hintStyle: TextStyle(color: colorScheme.onSurfaceVariant),
                   border: InputBorder.none,
                   contentPadding: const EdgeInsets.symmetric(vertical: 15.0),
@@ -74,18 +89,57 @@ class SearchBox extends StatelessWidget {
               ),
             ),
           ),
+          if (onOpenAdvancedSearch != null)
+            IconButton(
+              tooltip: "Advanced search",
+              onPressed: onOpenAdvancedSearch,
+              icon: const Icon(Icons.tune),
+            ),
           IconButton(
             tooltip: "Browse categories",
             onPressed: () => openCategoryPicker(context),
-            icon: const Icon(Icons.category_outlined),
+            icon: Icon(
+              Icons.category_outlined,
+              color: selectedCategory != null ? colorScheme.primary : null,
+            ),
           ),
-          IconButton(
-            onPressed: () async {
-              await toggleSortOrder();
+          PopupMenuButton<ArxivSortOption>(
+            tooltip: "Sort: ${sortOption.label}",
+            initialValue: sortOption,
+            onSelected: (option) async {
+              await onSortOptionChanged(option);
             },
-            icon: const Icon(Icons.sort),
+            itemBuilder: (context) => ArxivSortOption.values
+                .map(
+                  (option) => PopupMenuItem<ArxivSortOption>(
+                    value: option,
+                    child: Row(
+                      children: [
+                        Icon(
+                          option == sortOption
+                              ? Icons.check
+                              : Icons.sort,
+                          size: 18.0,
+                          color: option == sortOption
+                              ? colorScheme.primary
+                              : colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 10.0),
+                        Text(option.label),
+                      ],
+                    ),
+                  ),
+                )
+                .toList(),
+            icon: Icon(
+              Icons.sort,
+              color: sortOption != ArxivSortOption.relevance
+                  ? colorScheme.primary
+                  : null,
+            ),
           ),
           IconButton(
+            tooltip: "Search",
             onPressed: () async {
               await searchFunction(resetPagination: true);
             },

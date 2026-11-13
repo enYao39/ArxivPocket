@@ -5,6 +5,27 @@ import 'package:arxiv/models/paper.dart';
 import 'package:dio/dio.dart';
 import 'package:xml2json/xml2json.dart';
 
+enum ArxivSortOption {
+  relevance(sortBy: "relevance", sortOrder: "descending", label: "Relevance"),
+  newest(sortBy: "submittedDate", sortOrder: "descending", label: "Newest"),
+  oldest(sortBy: "submittedDate", sortOrder: "ascending", label: "Oldest"),
+  recentlyUpdated(
+    sortBy: "lastUpdatedDate",
+    sortOrder: "descending",
+    label: "Recently Updated",
+  );
+
+  const ArxivSortOption({
+    required this.sortBy,
+    required this.sortOrder,
+    required this.label,
+  });
+
+  final String sortBy;
+  final String sortOrder;
+  final String label;
+}
+
 class ArxivSearchResult {
   const ArxivSearchResult({
     required this.papers,
@@ -13,6 +34,7 @@ class ArxivSearchResult {
     required this.rawXml,
     this.errorMessage,
     this.statusCode,
+    this.topic,
   });
 
   final List<Paper> papers;
@@ -21,6 +43,7 @@ class ArxivSearchResult {
   final String rawXml;
   final String? errorMessage;
   final int? statusCode;
+  final String? topic;
 
   bool get hasError => errorMessage?.isNotEmpty == true;
 
@@ -126,9 +149,15 @@ class Arxiv {
     String term, {
     int page = 0,
     int pageSize = 30,
+    ArxivSortOption sortOption = ArxivSortOption.relevance,
   }) async {
     return _runRateLimitedRequest(
-      () => _searchWithMetadata(term, page: page, pageSize: pageSize),
+      () => _searchWithMetadata(
+        term,
+        page: page,
+        pageSize: pageSize,
+        sortOption: sortOption,
+      ),
     );
   }
 
@@ -136,13 +165,20 @@ class Arxiv {
     String term, {
     int page = 0,
     int pageSize = 30,
+    ArxivSortOption sortOption = ArxivSortOption.relevance,
+    String? topic,
   }) async {
     final parkerXml = Xml2Json();
     final rawXml = Xml2Json();
 
     try {
       final response = await _dio.getUri<String>(
-        queryUriFor(term, page: page, pageSize: pageSize),
+        queryUriFor(
+          term,
+          page: page,
+          pageSize: pageSize,
+          sortOption: sortOption,
+        ),
       );
       final responseXml = response.data?.toString() ?? "";
       if (responseXml.trim().isEmpty) {
@@ -180,6 +216,7 @@ class Arxiv {
         rawResponse: rawData,
         rawXml: responseXml,
         statusCode: response.statusCode,
+        topic: topic,
       );
     } on DioException catch (e) {
       return _failure(
@@ -191,12 +228,53 @@ class Arxiv {
     }
   }
 
-  static Uri queryUriFor(String term, {int page = 0, int pageSize = 30}) {
+  static Uri queryUriFor(
+    String term, {
+    int page = 0,
+    int pageSize = 30,
+    ArxivSortOption sortOption = ArxivSortOption.relevance,
+  }) {
+    final arxivId = extractArxivId(term);
+    if (arxivId != null) {
+      return Uri.https(_host, _path, {
+        "id_list": arxivId,
+        "start": page.toString(),
+        "max_results": pageSize.toString(),
+      });
+    }
+
     return Uri.https(_host, _path, {
       "search_query": searchQueryFor(term),
       "start": page.toString(),
       "max_results": pageSize.toString(),
+      "sortBy": sortOption.sortBy,
+      "sortOrder": sortOption.sortOrder,
     });
+  }
+
+  /// Extracts a normalized arXiv paper ID from a bare ID, `arXiv:` prefix, or arXiv URL.
+  static String? extractArxivId(String input) {
+    final trimmed = input.trim();
+    if (trimmed.isEmpty) return null;
+
+    // Match arXiv URLs like https://arxiv.org/abs/2301.07041v1 or /pdf/2301.07041.pdf
+    final urlMatch = RegExp(
+      r'^(?:https?:\/\/)?(?:export\.)?arxiv\.org\/(?:abs|pdf|html)\/([^\s?#]+?)(?:\.pdf)?\/?$',
+      caseSensitive: false,
+    ).firstMatch(trimmed);
+    final candidate = (urlMatch?.group(1) ?? trimmed)
+        .replaceFirst(RegExp(r'^arxiv:', caseSensitive: false), '')
+        .trim();
+
+    final newIdPattern = RegExp(r'^\d{4}\.\d{4,5}(?:v\d+)?$');
+    final oldIdPattern = RegExp(
+      r'^[a-z-]+(?:\.[a-z-]+)?\/\d{7}(?:v\d+)?$',
+      caseSensitive: false,
+    );
+    if (newIdPattern.hasMatch(candidate) || oldIdPattern.hasMatch(candidate)) {
+      return candidate;
+    }
+    return null;
   }
 
   static String searchQueryFor(String term) {
@@ -204,12 +282,16 @@ class Arxiv {
     if (_isArxivFieldQuery(trimmedTerm)) {
       return trimmedTerm;
     }
+    final arxivId = extractArxivId(trimmedTerm);
+    if (arxivId != null) {
+      return "id:$arxivId";
+    }
     return "all:$trimmedTerm";
   }
 
   static bool _isArxivFieldQuery(String term) {
     return RegExp(
-      r'^(all|ti|au|abs|co|jr|cat|rn|id):',
+      r'^(all|ti|au|abs|co|jr|cat|rn|id|submittedDate|lastUpdatedDate):',
       caseSensitive: false,
     ).hasMatch(term);
   }
@@ -218,27 +300,43 @@ class Arxiv {
     String term, {
     int page = 0,
     int pageSize = 30,
+    ArxivSortOption sortOption = ArxivSortOption.relevance,
   }) async {
     final result = await searchWithMetadata(
       term,
       page: page,
       pageSize: pageSize,
+      sortOption: sortOption,
     );
     return result.papers;
   }
 
   /// Fetches papers for a random topic.
-  static Future<ArxivSearchResult> suggestWithMetadata({int pageSize = 30}) {
+  static Future<ArxivSearchResult> suggestWithMetadata({
+    int pageSize = 30,
+    ArxivSortOption sortOption = ArxivSortOption.relevance,
+  }) {
     Random random = Random();
     int randomIndex = random.nextInt(_topics.length);
     String topic = _topics[randomIndex];
 
-    return searchWithMetadata(topic, pageSize: pageSize);
+    return _runRateLimitedRequest(
+      () => _searchWithMetadata(
+        topic,
+        pageSize: pageSize,
+        sortOption: sortOption,
+        topic: topic,
+      ),
+    );
   }
 
-  static Future<List<Paper>> suggest({int pageSize = 30}) {
+  static Future<List<Paper>> suggest({
+    int pageSize = 30,
+    ArxivSortOption sortOption = ArxivSortOption.relevance,
+  }) {
     return suggestWithMetadata(
       pageSize: pageSize,
+      sortOption: sortOption,
     ).then((result) => result.papers);
   }
 
@@ -287,6 +385,7 @@ class Arxiv {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.receiveTimeout:
       case DioExceptionType.sendTimeout:
+      case DioExceptionType.transformTimeout:
         return "arXiv took too long to respond. Please try again.";
       case DioExceptionType.connectionError:
         return "Could not reach arXiv. Check your connection and try again.";

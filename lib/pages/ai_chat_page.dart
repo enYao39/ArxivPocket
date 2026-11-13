@@ -43,9 +43,15 @@ class _AIChatPageState extends State<AIChatPage> {
   final _systemLoadingTrigger = "SYMLOADINGANIMATION";
 
   Gemini? model;
+  AiProvider aiProvider = AiProvider.gemini;
+  String baseUrl = Gemini.defaultOpenAiBaseUrl;
+  String customModel = "";
   String selectedModelName = Gemini.defaultModelName;
   var geminiModels = [GeminiModelOption.fallback()];
   var isLoadingGeminiModels = false;
+
+  bool get _hasConfiguredProvider =>
+      apiKey.isNotEmpty || aiProvider == AiProvider.openAiCompatible;
 
   String get selectedModelLabel {
     return geminiModels
@@ -238,7 +244,7 @@ class _AIChatPageState extends State<AIChatPage> {
   }
 
   Future<void> rebuildModel({List<ChatMessage> history = const []}) async {
-    if (apiKey.isEmpty) {
+    if (!_hasConfiguredProvider) {
       model = null;
       return;
     }
@@ -248,6 +254,8 @@ class _AIChatPageState extends State<AIChatPage> {
       paper: activePaperData,
       modelName: selectedModelName,
       history: history,
+      provider: aiProvider,
+      baseUrl: baseUrl,
     );
   }
 
@@ -255,7 +263,7 @@ class _AIChatPageState extends State<AIChatPage> {
     activeThread = null;
     activePaperData = widget.paperData;
     chatList.clear();
-    apiKeySettingsOn = apiKey.isEmpty;
+    apiKeySettingsOn = !_hasConfiguredProvider;
     await rebuildModel();
 
     if (!mounted) return;
@@ -318,12 +326,14 @@ class _AIChatPageState extends State<AIChatPage> {
     await apiBox.put("geminiModel", modelName);
     await Hive.close();
 
-    if (apiKey.isNotEmpty) {
+    if (_hasConfiguredProvider) {
       model = await Gemini.newModel(
         apiKey,
         paper: activePaperData,
         modelName: selectedModelName,
         history: messagesToPersist(),
+        provider: aiProvider,
+        baseUrl: baseUrl,
       );
       await persistActiveThread();
     }
@@ -334,11 +344,14 @@ class _AIChatPageState extends State<AIChatPage> {
 
   void configModel() async {
     Box apiBox = await Hive.openBox("apibox");
+    aiProvider = AiProvider.fromStored(await apiBox.get("provider"));
     apiKey = await apiBox.get("apikey") ?? "";
+    baseUrl = await apiBox.get("baseUrl") ?? Gemini.defaultOpenAiBaseUrl;
+    customModel = await apiBox.get("customModel") ?? "";
     final savedModelName = await apiBox.get("geminiModel");
     await Hive.close();
 
-    if (apiKey.isNotEmpty) {
+    if (_hasConfiguredProvider) {
       if (mounted) {
         setState(() {
           apiKeySettingsOn = false;
@@ -346,15 +359,23 @@ class _AIChatPageState extends State<AIChatPage> {
         });
       }
 
-      geminiModels = await Gemini.listModels(apiKey);
-      selectedModelName = resolveSelectedModelName(
-        activeThread?.modelName ?? savedModelName,
+      geminiModels = await Gemini.listModels(
+        apiKey,
+        provider: aiProvider,
+        baseUrl: baseUrl,
+        customModel: customModel,
       );
+      final preferredModel = customModel.trim().isNotEmpty
+          ? customModel.trim()
+          : (activeThread?.modelName ?? savedModelName);
+      selectedModelName = resolveSelectedModelName(preferredModel);
       model = await Gemini.newModel(
         apiKey,
         paper: activePaperData,
         modelName: selectedModelName,
         history: messagesToPersist(),
+        provider: aiProvider,
+        baseUrl: baseUrl,
       );
       apiKeySettingsOn = false;
     } else {
@@ -737,7 +758,9 @@ class _AIChatPageState extends State<AIChatPage> {
                               horizontal: 50.0,
                             ),
                             child: Text(
-                              activePaperData == null
+                              apiKeySettingsOn
+                                  ? "Choose an AI provider (Google Gemini or any OpenAI-compatible API) to start chatting."
+                                  : activePaperData == null
                                   ? "This AI conversation is powered by $selectedModelLabel."
                                   : "This AI conversation is powered by $selectedModelLabel. You can have conversations about the current paper here.",
                               textAlign: TextAlign.center,

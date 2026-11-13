@@ -4,6 +4,18 @@ import 'package:dio/dio.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
+enum AiProvider {
+  gemini,
+  openAiCompatible;
+
+  static AiProvider fromStored(dynamic value) {
+    if (value?.toString() == openAiCompatible.name) {
+      return openAiCompatible;
+    }
+    return gemini;
+  }
+}
+
 class GeminiModelOption {
   const GeminiModelOption({required this.id, required this.label});
 
@@ -20,11 +32,11 @@ class GeminiModelOption {
   factory GeminiModelOption.fromJson(Map<String, dynamic> json) {
     final name = json['name']?.toString() ?? '';
     final baseModelId = json['baseModelId']?.toString() ?? '';
-    final modelId = baseModelId.isNotEmpty
-        ? baseModelId
-        : name.startsWith('models/')
+    final modelId = name.startsWith('models/')
         ? name.substring('models/'.length)
-        : baseModelId;
+        : baseModelId.isNotEmpty
+        ? baseModelId
+        : name;
 
     return GeminiModelOption(
       id: modelId,
@@ -44,31 +56,64 @@ class GeminiModelOption {
 
 class Gemini {
   static const defaultModelName = 'gemini-2.5-flash';
+  static const defaultOpenAiBaseUrl = 'https://api.openai.com/v1';
+  static const defaultOpenAiModelName = 'gpt-4o-mini';
   static final _dio = Dio();
 
-  late final GenerativeModel _model;
-  late final ChatSession _chatSession;
+  final AiProvider provider;
+  GenerativeModel? _model;
+  ChatSession? _chatSession;
+
+  String? _openAiBaseUrl;
+  String? _openAiApiKey;
+  String? _openAiModelName;
+  final List<Map<String, String>> _openAiMessages = [];
 
   Gemini._internal(
     String apiKey,
     String systemPrompt,
     String modelName, {
     List<ChatMessage> history = const [],
+    this.provider = AiProvider.gemini,
+    String? baseUrl,
   }) {
-    _model = GenerativeModel(
-      apiKey: apiKey,
-      model: modelName,
-      systemInstruction: Content.system(systemPrompt),
-      generationConfig: GenerationConfig(
-        temperature: 1,
-        topK: 64,
-        topP: 0.95,
-        maxOutputTokens: 8192,
-        responseMimeType: 'text/plain',
-      ),
-    );
+    if (provider == AiProvider.gemini) {
+      _model = GenerativeModel(
+        apiKey: apiKey,
+        model: modelName,
+        systemInstruction: Content.system(systemPrompt),
+        generationConfig: GenerationConfig(
+          temperature: 1,
+          topK: 64,
+          topP: 0.95,
+          maxOutputTokens: 8192,
+          responseMimeType: 'text/plain',
+        ),
+      );
 
-    _chatSession = _model.startChat(history: _contentHistoryFor(history));
+      _chatSession = _model!.startChat(history: _contentHistoryFor(history));
+    } else {
+      _openAiBaseUrl = normalizeBaseUrl(baseUrl);
+      _openAiApiKey = apiKey;
+      _openAiModelName = modelName;
+      if (systemPrompt.trim().isNotEmpty) {
+        _openAiMessages.add({'role': 'system', 'content': systemPrompt});
+      }
+      for (final message in history) {
+        final content = message.content.trim();
+        if (content.isEmpty || message.role == Role.system) continue;
+        _openAiMessages.add({
+          'role': message.role == Role.user ? 'user' : 'assistant',
+          'content': content,
+        });
+      }
+    }
+  }
+
+  static String normalizeBaseUrl(String? baseUrl) {
+    final trimmed = (baseUrl ?? '').trim();
+    if (trimmed.isEmpty) return defaultOpenAiBaseUrl;
+    return trimmed.replaceAll(RegExp(r'/+$'), '');
   }
 
   static Future<Gemini> newModel(
@@ -76,11 +121,20 @@ class Gemini {
     Paper? paper,
     String modelName = defaultModelName,
     List<ChatMessage> history = const [],
+    AiProvider provider = AiProvider.gemini,
+    String? baseUrl,
   }) async {
     final systemPrompt = paper != null
         ? await _getModelSystemMessage(paper)
         : await _getGeneralSystemMessage();
-    return Gemini._internal(apiKey, systemPrompt, modelName, history: history);
+    return Gemini._internal(
+      apiKey,
+      systemPrompt,
+      modelName,
+      history: history,
+      provider: provider,
+      baseUrl: baseUrl,
+    );
   }
 
   static List<Content> _contentHistoryFor(List<ChatMessage> messages) {
@@ -113,7 +167,6 @@ class Gemini {
       rawModel['name'],
       rawModel['baseModelId'],
       rawModel['displayName'],
-      rawModel['description'],
     ].whereType<String>().join(' ').toLowerCase();
 
     if (!searchableFields.contains('gemini-')) return false;
@@ -140,7 +193,20 @@ class Gemini {
     return !excludedTerms.any(searchableFields.contains);
   }
 
-  static Future<List<GeminiModelOption>> listModels(String apiKey) async {
+  static Future<List<GeminiModelOption>> listModels(
+    String apiKey, {
+    AiProvider provider = AiProvider.gemini,
+    String? baseUrl,
+    String? customModel,
+  }) async {
+    if (provider == AiProvider.openAiCompatible) {
+      return _listOpenAiCompatibleModels(
+        apiKey,
+        baseUrl: baseUrl,
+        customModel: customModel,
+      );
+    }
+
     try {
       final response = await _dio.get(
         'https://generativelanguage.googleapis.com/v1beta/models',
@@ -173,11 +239,101 @@ class Gemini {
     }
   }
 
+  static Future<List<GeminiModelOption>> _listOpenAiCompatibleModels(
+    String apiKey, {
+    String? baseUrl,
+    String? customModel,
+  }) async {
+    final normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+    final trimmedCustom = customModel?.trim() ?? '';
+    final fallbackId = trimmedCustom.isNotEmpty
+        ? trimmedCustom
+        : defaultOpenAiModelName;
+    final fallbackOption = GeminiModelOption(
+      id: fallbackId,
+      label: fallbackId,
+    );
+
+    try {
+      final headers = <String, String>{};
+      if (apiKey.trim().isNotEmpty) {
+        headers['Authorization'] = 'Bearer ${apiKey.trim()}';
+      }
+
+      final response = await _dio.get(
+        '$normalizedBaseUrl/models',
+        options: Options(headers: headers),
+      );
+      final data = response.data;
+      if (data is! Map<String, dynamic>) return [fallbackOption];
+
+      final rawModels = data['data'];
+      if (rawModels is! List) return [fallbackOption];
+
+      final options = rawModels
+          .whereType<Map>()
+          .map((item) => item['id']?.toString() ?? '')
+          .where((id) => id.isNotEmpty)
+          .map((id) => GeminiModelOption(id: id, label: id))
+          .toList()
+        ..sort((a, b) => a.label.compareTo(b.label));
+
+      if (trimmedCustom.isNotEmpty &&
+          !options.any((option) => option.id == trimmedCustom)) {
+        options.insert(0, GeminiModelOption(id: trimmedCustom, label: trimmedCustom));
+      }
+
+      return options.isEmpty ? [fallbackOption] : options;
+    } catch (_) {
+      return [fallbackOption];
+    }
+  }
+
   Future<ChatMessage> sendMessage(String message) async {
+    if (provider == AiProvider.openAiCompatible) {
+      return _sendOpenAiMessage(message);
+    }
+
     try {
       var content = Content.text(message);
-      var response = await _chatSession.sendMessage(content);
+      var response = await _chatSession!.sendMessage(content);
       return ChatMessage(Role.ai, response.text?.trim() ?? "");
+    } catch (e) {
+      return ChatMessage(Role.ai, e.toString());
+    }
+  }
+
+  Future<ChatMessage> _sendOpenAiMessage(String message) async {
+    try {
+      _openAiMessages.add({'role': 'user', 'content': message});
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+      if ((_openAiApiKey ?? '').trim().isNotEmpty) {
+        headers['Authorization'] = 'Bearer ${_openAiApiKey!.trim()}';
+      }
+
+      final response = await _dio.post(
+        '$_openAiBaseUrl/chat/completions',
+        options: Options(headers: headers),
+        data: {
+          'model': _openAiModelName ?? defaultOpenAiModelName,
+          'messages': _openAiMessages,
+        },
+      );
+
+      final data = response.data;
+      final choices = data is Map ? data['choices'] : null;
+      if (choices is List && choices.isNotEmpty) {
+        final first = choices.first;
+        final msg = first is Map ? first['message'] : null;
+        final text = (msg is Map ? msg['content']?.toString() : null) ?? '';
+        final trimmed = text.trim();
+        _openAiMessages.add({'role': 'assistant', 'content': trimmed});
+        return ChatMessage(Role.ai, trimmed);
+      }
+
+      return ChatMessage(Role.ai, 'No response returned from AI provider.');
     } catch (e) {
       return ChatMessage(Role.ai, e.toString());
     }
