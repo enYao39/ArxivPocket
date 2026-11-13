@@ -18,7 +18,7 @@ class HowToUsePage extends StatelessWidget {
         padding: const EdgeInsets.all(16.0),
         children: [
           _buildSection(
-            'OpenScholarXIV',
+            'ArxivPocket',
             'assets/banners/OpenScholarXIV7.webp',
             'Completely Free & Open-Source App to browse and explore research papers with AI-powered chat and more features.',
             context,

@@ -181,7 +181,7 @@ class _AIChatPageState extends State<AIChatPage> {
 
   var generalPromptSuggestions = [
     "What is arXiv?",
-    "Tell me about OpenScholarXIV?",
+    "Tell me about ArxivPocket?",
     "Most profound research papers published?",
     "How can I get started writing research papers?",
     "Precautions to take while reading research papers?",
@@ -704,7 +704,7 @@ class _AIChatPageState extends State<AIChatPage> {
         automaticallyImplyLeading: false,
         leading: Navigator.of(context).canPop() ? const BackButton() : null,
         title: const Text(
-          "OpenScholarXIV",
+          "ArxivPocket",
           // style: TextStyle(fontSize: 15.0),
         ),
         actions: [

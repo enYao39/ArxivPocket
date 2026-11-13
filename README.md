@@ -1,8 +1,8 @@
-# OpenScholarXIV (Android Fork by hydrogen)
+# ArxivPocket (Android Fork by hydrogen)
 
 > **Note:** This Android-focused fork and its modifications are maintained by **hydrogen**, based on [ScholarXIV/OpenScholarXIV](https://github.com/ScholarXIV/OpenScholarXIV). Currently only the `android` branch is maintained.
 
-OpenScholarXIV is a free and open-source app for finding, reading, bookmarking, summarizing, and discussing arXiv papers with AI.
+ArxivPocket is a free and open-source app for finding, reading, bookmarking, summarizing, and discussing arXiv papers with AI.
 
 <div align="center">
   <img src="assets/banners/OpenScholarXIV7.webp" width="700" alt="OpenScholarXIV cover">

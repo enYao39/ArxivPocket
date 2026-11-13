@@ -29,7 +29,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  var sourceCodeURL = "https://github.com/ScholarXIV/OpenScholarXIV";
+  var sourceCodeURL = "https://github.com/enYao39/ArxivPocket";
   var scholarXivURL = "https://ScholarXIV.com";
   int startPagination = 0;
   int maxContent = 30;
@@ -511,7 +511,7 @@ class _HomePageState extends State<HomePage> {
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        title: const Text("OpenScholarXIV"),
+        title: const Text("ArxivPocket"),
         actions: [
           // SETTINGS
           IconButton(
