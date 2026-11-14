@@ -466,18 +466,23 @@ class _EachPaperCardState extends State<EachPaperCard> {
                     ),
                   ),
                   const SizedBox(width: 10.0),
-                  GestureDetector(
-                    onLongPress: _openFolderPicker,
-                    child: IconButton(
-                      tooltip: "Collect (long press for folders)",
-                      onPressed: bookmarkToggle,
-                      icon: Icon(
-                        isBookmarked == false
-                            ? Icons.bookmark_border
-                            : Icons.bookmark,
-                        color: isBookmarked
-                            ? colorScheme.primary
-                            : colorScheme.onSurfaceVariant,
+                  Semantics(
+                    button: true,
+                    label: "Collect paper. Long press to choose folder.",
+                    child: InkResponse(
+                      onTap: bookmarkToggle,
+                      onLongPress: _openFolderPicker,
+                      radius: 20.0,
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Icon(
+                          isBookmarked == false
+                              ? Icons.bookmark_border
+                              : Icons.bookmark,
+                          color: isBookmarked
+                              ? colorScheme.primary
+                              : colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ),
                   ),
