@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:arxiv/models/paper.dart';
+import 'package:arxiv/models/paper_note.dart';
 import 'package:hive/hive.dart';
 
 class CollectionFolder {
@@ -196,5 +197,28 @@ class CollectionStore {
           .toList();
     }
     return papers;
+  }
+
+  static List<PaperNote> filterNotes({
+    required List<PaperNote> notes,
+    required Map<String, List<String>> paperFolderMap,
+    String? selectedFolderId,
+    bool unsortedOnly = false,
+  }) {
+    if (unsortedOnly) {
+      return notes
+          .where((n) => (paperFolderMap[n.paperId] ?? const []).isEmpty)
+          .toList();
+    }
+    if (selectedFolderId != null) {
+      return notes
+          .where(
+            (n) => (paperFolderMap[n.paperId] ?? const []).contains(
+              selectedFolderId,
+            ),
+          )
+          .toList();
+    }
+    return notes;
   }
 }

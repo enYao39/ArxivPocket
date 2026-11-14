@@ -1,5 +1,6 @@
 import "package:arxiv/pages/how_to_use.dart";
 import "package:arxiv/services/main_page_style_store.dart";
+import "package:arxiv/services/pdf_cache_store.dart";
 import "package:arxiv/theme/app_theme.dart";
 import "package:flutter/material.dart";
 import "package:hive/hive.dart";
@@ -13,7 +14,53 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  final PdfCacheStore _pdfCacheStore = PdfCacheStore();
   var toolsOn = true;
+  int _pdfCacheLimitMb = PdfCacheStore.defaultMaxCacheMb;
+  int _cachedPdfCount = 0;
+  int _cachedPdfBytes = 0;
+
+  Future<void> _loadCacheInfo() async {
+    final limitMb = await _pdfCacheStore.loadMaxCacheMb();
+    final stats = await _pdfCacheStore.getCacheStats();
+    if (!mounted) return;
+    setState(() {
+      _pdfCacheLimitMb = limitMb;
+      _cachedPdfCount = stats.fileCount;
+      _cachedPdfBytes = stats.totalBytes;
+    });
+  }
+
+  Future<void> _pickCacheLimit() async {
+    final chosen = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text("PDF Cache Limit"),
+        children: PdfCacheStore.limitOptionsMb
+            .map(
+              (mb) => RadioListTile<int>(
+                value: mb,
+                groupValue: _pdfCacheLimitMb,
+                title: Text(PdfCacheStore.formatLimitLabel(mb)),
+                onChanged: (value) => Navigator.pop(dialogContext, value),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (chosen == null) return;
+    await _pdfCacheStore.saveMaxCacheMb(chosen);
+    await _loadCacheInfo();
+  }
+
+  Future<void> _clearPdfCache() async {
+    await _pdfCacheStore.clearCache();
+    await _loadCacheInfo();
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text("PDF cache cleared.")));
+  }
 
   Future<void> saveToolsSetting(bool value) async {
     final toolsBox = await Hive.openBox("toolsBox");
@@ -41,6 +88,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     loadToolsSetting();
+    _loadCacheInfo();
     MainPageStyleStore().ensureLoaded();
   }
 
@@ -105,6 +153,26 @@ class _SettingsPageState extends State<SettingsPage> {
             subtitle: "Enables Speak, Copy, and Share for AI replies.",
             value: toolsOn,
             onChanged: saveToolsSetting,
+          ),
+          const SizedBox(height: 18.0),
+          _SettingsSectionLabel(
+            label: "Storage & Cache",
+            color: colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(height: 8.0),
+          _SettingsActionTile(
+            icon: Icons.storage_outlined,
+            title: "PDF Cache Limit",
+            subtitle:
+                "${PdfCacheStore.formatLimitLabel(_pdfCacheLimitMb)} • Deletes oldest PDFs first",
+            onTap: _pickCacheLimit,
+          ),
+          _SettingsActionTile(
+            icon: Icons.cleaning_services_outlined,
+            title: "Clear PDF Cache",
+            subtitle:
+                "$_cachedPdfCount files • ${PdfCacheStore.formatBytes(_cachedPdfBytes)}",
+            onTap: _cachedPdfCount > 0 ? _clearPdfCache : () {},
           ),
           const SizedBox(height: 18.0),
           _SettingsSectionLabel(

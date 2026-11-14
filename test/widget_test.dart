@@ -4,9 +4,11 @@ import 'package:arxiv/apis/arxiv.dart';
 import 'package:arxiv/components/advanced_search_sheet.dart';
 import 'package:arxiv/data/arxiv_categories.dart';
 import 'package:arxiv/models/paper.dart';
+import 'package:arxiv/models/paper_note.dart';
 import 'package:arxiv/services/arxiv_update_schedule.dart';
 import 'package:arxiv/services/collection_store.dart';
 import 'package:arxiv/services/main_page_style_store.dart';
+import 'package:arxiv/services/pdf_cache_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 
@@ -249,14 +251,77 @@ void main() {
         ['2401.00001'],
       );
 
+      final n1 = PaperNote(
+        id: 'n1',
+        paperId: '2006.06236v2',
+        paperTitle: 'P1',
+        body: 'Note 1',
+        createdAt: DateTime(2024, 1, 1),
+        updatedAt: DateTime(2024, 1, 1),
+      );
+      final n2 = PaperNote(
+        id: 'n2',
+        paperId: '2401.00001',
+        paperTitle: 'P2',
+        body: 'Note 2',
+        createdAt: DateTime(2024, 1, 2),
+        updatedAt: DateTime(2024, 1, 2),
+      );
+      expect(
+        CollectionStore.filterNotes(
+          notes: [n1, n2],
+          paperFolderMap: map,
+          selectedFolderId: folder.id,
+        ).map((n) => n.paperId),
+        ['2006.06236v2'],
+      );
+      expect(
+        CollectionStore.filterNotes(
+          notes: [n1, n2],
+          paperFolderMap: map,
+          unsortedOnly: true,
+        ).map((n) => n.paperId),
+        ['2401.00001'],
+      );
+
       await store.renameFolder(folder.id, 'Generative Models');
       expect((await store.loadFolders()).first.name, 'Generative Models');
 
-      await store.deleteFolder(folder.id);
-      expect(await store.loadFolders(), isEmpty);
-      expect(await store.loadPaperFolderMap(), isEmpty);
+    await store.deleteFolder(folder.id);
+    expect(await store.loadFolders(), isEmpty);
+    expect(await store.loadPaperFolderMap(), isEmpty);
     } finally {
       await Hive.close();
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
+    }
+  });
+
+  test('PdfCacheStore.enforceLimit deletes oldest PDFs first', () async {
+    final tempDir = await Directory.systemTemp.createTemp('pdf_cache_limit_test');
+    try {
+      final oldest = File('${tempDir.path}/oldest.pdf');
+      final middle = File('${tempDir.path}/middle.pdf');
+      final newest = File('${tempDir.path}/newest.pdf');
+
+      await oldest.writeAsBytes(List.filled(600, 1));
+      await oldest.setLastModified(DateTime(2024, 1, 1));
+      await middle.writeAsBytes(List.filled(600, 2));
+      await middle.setLastModified(DateTime(2024, 1, 2));
+      await newest.writeAsBytes(List.filled(600, 3));
+      await newest.setLastModified(DateTime(2024, 1, 3));
+
+      await PdfCacheStore().enforceLimit(
+        cacheDir: tempDir,
+        maxBytes: 1200,
+        protectedPath: newest.path,
+      );
+
+      expect(await oldest.exists(), isFalse);
+      expect(await middle.exists(), isTrue);
+      expect(await newest.exists(), isTrue);
+    } finally {
       if (await tempDir.exists()) {
         await tempDir.delete(recursive: true);
       }

@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 import 'dart:io';
 
+import 'package:arxiv/services/pdf_cache_store.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
@@ -76,6 +77,7 @@ class _PDFViewerState extends State<PDFViewer> {
 
     final targetFile = File(widget.savePath);
     if (!forceDownload && await _isValidPdfFile(targetFile)) {
+      await PdfCacheStore().touchCachedFile(targetFile);
       if (!mounted) return;
       setState(() {
         _isLoading = false;
@@ -113,6 +115,7 @@ class _PDFViewerState extends State<PDFViewer> {
         await targetFile.delete();
       }
       await tempFile.rename(targetFile.path);
+      await PdfCacheStore().enforceLimit(protectedPath: targetFile.path);
 
       if (!mounted) return;
       setState(() {

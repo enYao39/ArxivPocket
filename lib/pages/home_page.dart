@@ -1,6 +1,4 @@
 // ignore_for_file: file_names
-import 'dart:io';
-
 import 'package:arxiv/apis/arxiv.dart';
 import 'package:arxiv/components/advanced_search_sheet.dart';
 import 'package:arxiv/components/each_paper_card.dart';
@@ -10,6 +8,7 @@ import 'package:arxiv/data/arxiv_categories.dart';
 import 'package:arxiv/services/arxiv_category_parser.dart';
 import 'package:arxiv/services/arxiv_update_schedule.dart';
 import 'package:arxiv/services/main_page_style_store.dart';
+import 'package:arxiv/services/pdf_cache_store.dart';
 import 'package:arxiv/models/paper.dart';
 import 'package:arxiv/pages/ai_chat_page.dart';
 import 'package:arxiv/pages/bookmarks_page.dart';
@@ -339,14 +338,7 @@ class _HomePageState extends State<HomePage> {
     final splitURL = pdfURL.split("/");
     final id = splitURL.isNotEmpty ? splitURL.last : "paper";
     final sanitizedId = id.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
-
-    final cacheDir = Directory(
-      '${(await getTemporaryDirectory()).path}/pdf_cache',
-    );
-    if (!await cacheDir.exists()) {
-      await cacheDir.create(recursive: true);
-    }
-    savePath = '${cacheDir.path}/$sanitizedId.pdf';
+    savePath = await PdfCacheStore().cachePathForId(sanitizedId);
 
     if (!mounted) return;
     Navigator.push(
