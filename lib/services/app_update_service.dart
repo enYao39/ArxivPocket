@@ -3,7 +3,8 @@ import 'package:dio/dio.dart';
 class AppUpdateInfo {
   const AppUpdateInfo({
     required this.currentVersion,
-    required this.latestVersion,
+    required this.installedTag,
+    required this.latestTag,
     required this.hasUpdate,
     required this.releaseUrl,
     this.releaseName,
@@ -12,7 +13,8 @@ class AppUpdateInfo {
   });
 
   final String currentVersion;
-  final String latestVersion;
+  final String installedTag;
+  final String latestTag;
   final bool hasUpdate;
   final String releaseUrl;
   final String? releaseName;
@@ -22,10 +24,18 @@ class AppUpdateInfo {
 
 class AppUpdateService {
   static const String currentVersion = "3.0.5";
+  static const String buildTag = String.fromEnvironment('RELEASE_TAG');
+  static const String buildDateIso = String.fromEnvironment(
+    'BUILD_DATE',
+    defaultValue: '2026-11-14T12:25:00Z',
+  );
   static const String _latestReleaseApiUrl =
       "https://api.github.com/repos/enYao39/ArxivPocket/releases/latest";
   static const String releasesPageUrl =
       "https://github.com/enYao39/ArxivPocket/releases";
+
+  static String get displayInstalledVersion =>
+      buildTag.isNotEmpty ? buildTag : "v$currentVersion";
 
   final Dio _dio;
 
@@ -51,6 +61,8 @@ class AppUpdateService {
     }
 
     final tagName = (data["tag_name"] ?? "").toString().trim();
+    final publishedAtRaw = (data["published_at"] ?? "").toString().trim();
+    final publishedAt = DateTime.tryParse(publishedAtRaw)?.toUtc();
     final releaseUrl = (data["html_url"] ?? releasesPageUrl).toString().trim();
     final releaseName = data["name"]?.toString().trim();
     final releaseNotes = data["body"]?.toString().trim();
@@ -67,18 +79,48 @@ class AppUpdateService {
       }
     }
 
-    final normalizedLatest = normalizeVersion(tagName);
-    final hasUpdate = isNewerVersion(normalizedLatest, currentVersion);
+    final hasUpdate = evaluateHasUpdate(
+      latestTag: tagName,
+      publishedAt: publishedAt,
+    );
 
     return AppUpdateInfo(
       currentVersion: currentVersion,
-      latestVersion: normalizedLatest.isEmpty ? tagName : normalizedLatest,
+      installedTag: displayInstalledVersion,
+      latestTag: tagName.isEmpty ? "unknown" : tagName,
       hasUpdate: hasUpdate,
       releaseUrl: releaseUrl,
       releaseName: releaseName,
       releaseNotes: releaseNotes,
       apkDownloadUrl: apkUrl,
     );
+  }
+
+  static bool evaluateHasUpdate({
+    required String latestTag,
+    DateTime? publishedAt,
+    String installedTag = buildTag,
+    String installedBuildDateIso = buildDateIso,
+  }) {
+    final trimmedTag = latestTag.trim();
+    if (trimmedTag.isEmpty) return false;
+
+    // When built by a GitHub Release workflow, compare exact release tags so
+    // custom release tags work without bumping pubspec.yaml.
+    if (installedTag.trim().isNotEmpty) {
+      return trimmedTag != installedTag.trim();
+    }
+
+    if (isNewerVersion(trimmedTag, currentVersion)) {
+      return true;
+    }
+
+    final buildDate = DateTime.tryParse(installedBuildDateIso)?.toUtc();
+    if (publishedAt != null && buildDate != null) {
+      return publishedAt.toUtc().isAfter(buildDate);
+    }
+
+    return false;
   }
 
   static String normalizeVersion(String raw) {

@@ -83,13 +83,13 @@ class _SettingsPageState extends State<SettingsPage> {
             title: Text(
               info.releaseName?.isNotEmpty == true
                   ? info.releaseName!
-                  : "Update available (v${info.latestVersion})",
+                  : "Update available (${info.latestTag})",
             ),
             content: SingleChildScrollView(
               child: Text(
                 info.releaseNotes?.isNotEmpty == true
-                    ? "Current: v${info.currentVersion}\nLatest: v${info.latestVersion}\n\n${info.releaseNotes}"
-                    : "A new version (v${info.latestVersion}) is available. You are on v${info.currentVersion}.",
+                    ? "Installed: ${info.installedTag}\nLatest: ${info.latestTag}\n\n${info.releaseNotes}"
+                    : "A new release (${info.latestTag}) is available. You are on ${info.installedTag}.",
               ),
             ),
             actions: [
@@ -116,7 +116,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              "You're on the latest version (v${info.currentVersion}).",
+              "You're on the latest release (${info.installedTag}).",
             ),
           ),
         );
@@ -293,7 +293,7 @@ class _SettingsPageState extends State<SettingsPage> {
             title: "Check for Updates",
             subtitle: _checkingUpdate
                 ? "Checking for updates..."
-                : "Current version: v${AppUpdateService.currentVersion}",
+                : "Current: ${AppUpdateService.displayInstalledVersion}",
             onTap: _checkForUpdates,
           ),
         ],

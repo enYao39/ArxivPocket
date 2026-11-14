@@ -447,4 +447,30 @@ void main() {
     expect(AppUpdateService.isNewerVersion('3.0.5', '3.0.5'), isFalse);
     expect(AppUpdateService.isNewerVersion('v3.0.4', '3.0.5'), isFalse);
   });
+
+  test('AppUpdateService.evaluateHasUpdate detects custom release tags without version bumps', () {
+    expect(
+      AppUpdateService.evaluateHasUpdate(
+        latestTag: 'v3.0.5-r2',
+        installedTag: 'v3.0.5-r1',
+      ),
+      isTrue,
+    );
+    expect(
+      AppUpdateService.evaluateHasUpdate(
+        latestTag: 'v3.0.5-r1',
+        installedTag: 'v3.0.5-r1',
+      ),
+      isFalse,
+    );
+    expect(
+      AppUpdateService.evaluateHasUpdate(
+        latestTag: 'custom-2026-11-15',
+        installedTag: '',
+        installedBuildDateIso: '2026-11-14T12:00:00Z',
+        publishedAt: DateTime.utc(2026, 11, 15, 0, 0, 0),
+      ),
+      isTrue,
+    );
+  });
 }
