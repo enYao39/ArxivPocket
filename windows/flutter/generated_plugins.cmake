@@ -4,7 +4,6 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   dynamic_color
-  flutter_tts
   syncfusion_pdfviewer_windows
   url_launcher_windows
   share_plus

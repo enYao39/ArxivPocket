@@ -5,6 +5,7 @@ import 'package:arxiv/components/advanced_search_sheet.dart';
 import 'package:arxiv/data/arxiv_categories.dart';
 import 'package:arxiv/models/paper.dart';
 import 'package:arxiv/models/paper_note.dart';
+import 'package:arxiv/services/aosp_tts_service.dart';
 import 'package:arxiv/services/arxiv_update_schedule.dart';
 import 'package:arxiv/services/collection_store.dart';
 import 'package:arxiv/services/main_page_style_store.dart';
@@ -430,5 +431,12 @@ void main() {
       ArxivUpdateSchedule.noAnnouncementReason(afterThuAnnouncement),
       isNull,
     );
+  });
+
+  test('AospTtsService.cleanTextForSpeech strips LaTeX and math delimiters', () {
+    final cleaned = AospTtsService.cleanTextForSpeech(
+      r'We study \textbf{diffusion} models where $x_t \in \mathbb{R}^d$.',
+    );
+    expect(cleaned, 'We study diffusion models where x t R ^d .');
   });
 }

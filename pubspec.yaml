@@ -46,7 +46,6 @@ dependencies:
     hive: ^2.2.3
     hive_flutter: ^1.1.0
     liquid_pull_to_refresh: ^3.0.1
-    flutter_tts: ^4.2.5
     theme_provider: ^0.6.0
     flutter_tex: ^4.0.9
     google_generative_ai: ^0.4.5

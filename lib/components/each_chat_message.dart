@@ -5,7 +5,7 @@ import 'package:arxiv/models/chat_message.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
-import 'package:flutter_tts/flutter_tts.dart';
+import 'package:arxiv/services/aosp_tts_service.dart';
 import 'package:arxiv/services/speech_rate_store.dart';
 import 'package:ionicons_plus/ionicons_plus.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
@@ -27,7 +27,7 @@ class EachChatMessage extends StatefulWidget {
 }
 
 class _EachChatMessageState extends State<EachChatMessage> {
-  var tts = FlutterTts();
+  final AospTtsService tts = AospTtsService();
   final SpeechRateStore _speechRateStore = SpeechRateStore();
   var speedRate = SpeechRateStore.defaultRate;
   var speedFactor = 0.1;

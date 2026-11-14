@@ -1,9 +1,9 @@
 // ignore_for_file: file_names
 import 'package:arxiv/models/paper.dart';
+import 'package:arxiv/services/aosp_tts_service.dart';
 import 'package:arxiv/services/speech_rate_store.dart';
 import 'package:flutter/material.dart';
 import 'package:ionicons_plus/ionicons_plus.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:flutter_tex/flutter_tex.dart';
 
 class FullScreenSummaryPage extends StatefulWidget {
@@ -21,7 +21,7 @@ class FullScreenSummaryPage extends StatefulWidget {
 }
 
 class _FullScreenSummaryPageState extends State<FullScreenSummaryPage> {
-  final FlutterTts _tts = FlutterTts();
+  final AospTtsService _tts = AospTtsService();
   final SpeechRateStore _speechRateStore = SpeechRateStore();
   var isSpeaking = false;
   var summary = "";
@@ -82,6 +82,12 @@ class _FullScreenSummaryPageState extends State<FullScreenSummaryPage> {
     _tts.setCompletionHandler(() {
       isSpeaking = false;
       if (mounted) setState(() {});
+    });
+    _tts.setErrorHandler((msg) {
+      isSpeaking = false;
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     });
     summary = widget.paperData.summary
         .trim()

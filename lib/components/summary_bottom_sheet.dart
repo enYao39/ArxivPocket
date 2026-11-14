@@ -2,9 +2,9 @@
 import 'package:arxiv/components/app_bottom_sheet.dart';
 import 'package:arxiv/models/paper.dart';
 import 'package:arxiv/pages/full_screen_summary_page.dart';
+import 'package:arxiv/services/aosp_tts_service.dart';
 import 'package:arxiv/services/speech_rate_store.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:flutter_tex/flutter_tex.dart';
 import 'package:ionicons_plus/ionicons_plus.dart';
 
@@ -23,7 +23,7 @@ class SummaryBottomSheet extends StatefulWidget {
 }
 
 class _SummaryBottomSheetState extends State<SummaryBottomSheet> {
-  final FlutterTts _tts = FlutterTts();
+  final AospTtsService _tts = AospTtsService();
   final SpeechRateStore _speechRateStore = SpeechRateStore();
   var isSpeaking = false;
   var summary = "";
@@ -37,6 +37,12 @@ class _SummaryBottomSheetState extends State<SummaryBottomSheet> {
     _tts.setCompletionHandler(() {
       isSpeaking = false;
       if (mounted) setState(() {});
+    });
+    _tts.setErrorHandler((msg) {
+      isSpeaking = false;
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     });
     summary = widget.paperData.summary;
   }
