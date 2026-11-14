@@ -10,6 +10,7 @@ class MainPageStyleSettings {
     this.maxAuthors = defaultMaxAuthors,
     this.restoreLastSession = true,
     this.restoreSearchFilter = false,
+    this.excludeCrossListed = false,
   });
 
   static const defaultMaxAuthors = 3;
@@ -18,18 +19,21 @@ class MainPageStyleSettings {
   final int maxAuthors;
   final bool restoreLastSession;
   final bool restoreSearchFilter;
+  final bool excludeCrossListed;
 
   MainPageStyleSettings copyWith({
     bool? limitAuthors,
     int? maxAuthors,
     bool? restoreLastSession,
     bool? restoreSearchFilter,
+    bool? excludeCrossListed,
   }) {
     return MainPageStyleSettings(
       limitAuthors: limitAuthors ?? this.limitAuthors,
       maxAuthors: maxAuthors ?? this.maxAuthors,
       restoreLastSession: restoreLastSession ?? this.restoreLastSession,
       restoreSearchFilter: restoreSearchFilter ?? this.restoreSearchFilter,
+      excludeCrossListed: excludeCrossListed ?? this.excludeCrossListed,
     );
   }
 }
@@ -56,6 +60,7 @@ class MainPageStyleStore {
   static const maxAuthorsKey = "maxAuthors";
   static const restoreLastSessionKey = "restoreLastSession";
   static const restoreSearchFilterKey = "restoreSearchFilter";
+  static const excludeCrossListedKey = "excludeCrossListed";
   static const lastQueryKey = "lastQuery";
   static const lastCategoryCodeKey = "lastCategoryCode";
   static const lastSortOptionKey = "lastSortOption";
@@ -73,6 +78,7 @@ class MainPageStyleStore {
     final storedMax = box.get(maxAuthorsKey);
     final storedRestore = box.get(restoreLastSessionKey);
     final storedRestoreSearch = box.get(restoreSearchFilterKey);
+    final storedExcludeCross = box.get(excludeCrossListedKey);
     await box.close();
 
     final settings = MainPageStyleSettings(
@@ -83,6 +89,8 @@ class MainPageStyleStore {
       restoreLastSession: storedRestore is bool ? storedRestore : true,
       restoreSearchFilter:
           storedRestoreSearch is bool ? storedRestoreSearch : false,
+      excludeCrossListed:
+          storedExcludeCross is bool ? storedExcludeCross : false,
     );
     _hasLoaded = true;
     notifier.value = settings;
@@ -102,6 +110,7 @@ class MainPageStyleStore {
     await box.put(maxAuthorsKey, settings.maxAuthors);
     await box.put(restoreLastSessionKey, settings.restoreLastSession);
     await box.put(restoreSearchFilterKey, settings.restoreSearchFilter);
+    await box.put(excludeCrossListedKey, settings.excludeCrossListed);
     await box.close();
   }
 

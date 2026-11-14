@@ -61,10 +61,10 @@ class Paper {
 
     return Paper(
       id,
-      _parseLatex(
+      parseLatex(
         _readText(jsonData["title"]).trim().replaceAll(RegExp(r'\s+'), ' '),
       ),
-      _parseLatex(
+      parseLatex(
         _readText(jsonData["summary"]).trim().replaceAll(RegExp(r'\s+'), ' '),
       ),
       _dateOnly(_readText(jsonData["published"])),
@@ -113,7 +113,7 @@ class Paper {
     return latexRegex.hasMatch(title);
   }
 
-  static String _parseLatex(String content) {
+  static String parseLatex(String content) {
     if (!containsLatex(content)) {
       return content;
     }

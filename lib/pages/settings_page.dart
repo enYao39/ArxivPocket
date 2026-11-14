@@ -212,6 +212,17 @@ class _MainPageStyleSettingsPageState extends State<MainPageStyleSettingsPage> {
                   ),
                 ),
               const SizedBox(height: 18.0),
+              _SettingsSwitchTile(
+                icon: Icons.filter_alt_off_outlined,
+                title: "Exclude cross-listed papers",
+                subtitle:
+                    "Only show papers whose primary category matches the selected category.",
+                value: settings.excludeCrossListed,
+                onChanged: (value) {
+                  _store.save(settings.copyWith(excludeCrossListed: value));
+                },
+              ),
+              const SizedBox(height: 20.0),
               _SettingsSectionLabel(
                 label: "Startup",
                 color: colorScheme.onSurfaceVariant,

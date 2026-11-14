@@ -1,4 +1,6 @@
 // ignore_for_file: file_names
+import 'dart:io';
+
 import 'package:arxiv/apis/arxiv.dart';
 import 'package:arxiv/components/advanced_search_sheet.dart';
 import 'package:arxiv/components/each_paper_card.dart';
@@ -37,6 +39,8 @@ class _HomePageState extends State<HomePage> {
   var pdfBaseURL = "https://arxiv.org/pdf";
   ArxivSortOption sortOption = ArxivSortOption.newest;
   ArxivCategory? selectedCategory;
+  ArxivAdvancedQuery? _activeAdvancedQuery;
+  String _lastAdvancedSummary = "";
 
   var isHomeScreenLoading = true;
   DateTime? _lastFetchedAtUtc;
@@ -52,7 +56,9 @@ class _HomePageState extends State<HomePage> {
   int _searchRequestSerial = 0;
 
   bool get _hasActiveSearchOrFilter =>
-      selectedCategory != null || searchTermController.text.trim().isNotEmpty;
+      selectedCategory != null ||
+      _activeAdvancedQuery != null ||
+      searchTermController.text.trim().isNotEmpty;
 
   void _scrollToTop() {
     if (!_feedScrollController.hasClients) return;
@@ -75,6 +81,11 @@ class _HomePageState extends State<HomePage> {
     });
 
     final rawSearchInput = searchTermController.text.trim();
+    if (_activeAdvancedQuery != null &&
+        rawSearchInput != _lastAdvancedSummary.trim()) {
+      _activeAdvancedQuery = null;
+      _lastAdvancedSummary = "";
+    }
     MainPageStyleStore().saveLastFeedState(
       LastFeedState(
         query: rawSearchInput,
@@ -84,20 +95,53 @@ class _HomePageState extends State<HomePage> {
         pageSize: maxContent,
       ),
     );
-    final searchTerm = combineCategoryAndQuery(
-      category: selectedCategory,
-      query: rawSearchInput,
-    );
+
+    final excludeCrossListed =
+        MainPageStyleStore.notifier.value.excludeCrossListed;
+    final filterPrimary = excludeCrossListed ? selectedCategory?.code : null;
+
     late final ArxivSearchResult result;
-    if (searchTerm.isEmpty) {
-      result = await suggestedPapers();
-    } else {
-      result = await Arxiv.searchWithMetadata(
-        searchTerm,
+    if (_activeAdvancedQuery != null) {
+      result = await Arxiv.advancedSearchWithMetadata(
+        _activeAdvancedQuery!,
         page: startPagination,
-        pageSize: maxContent,
-        sortOption: sortOption,
       );
+    } else if (selectedCategory != null && rawSearchInput.isEmpty) {
+      result = await Arxiv.advancedSearchWithMetadata(
+        ArxivAdvancedQuery(
+          category: selectedCategory,
+          includeCrossList: !excludeCrossListed,
+          sortOption: sortOption,
+          pageSize: ArxivWebSearch.normalizeWebPageSize(maxContent),
+        ),
+        page: startPagination,
+        filterPrimaryCategory: filterPrimary,
+      );
+    } else if (rawSearchInput.isNotEmpty) {
+      if (selectedCategory != null &&
+          Arxiv.extractArxivId(rawSearchInput) == null) {
+        result = await Arxiv.advancedSearchWithMetadata(
+          ArxivAdvancedQuery(
+            terms: [ArxivSearchTermRow(term: rawSearchInput)],
+            category: selectedCategory,
+            includeCrossList: !excludeCrossListed,
+            sortOption: sortOption,
+            pageSize: ArxivWebSearch.normalizeWebPageSize(maxContent),
+          ),
+          page: startPagination,
+          filterPrimaryCategory: filterPrimary,
+        );
+      } else {
+        result = await Arxiv.searchWithMetadata(
+          rawSearchInput,
+          page: startPagination,
+          pageSize: maxContent,
+          sortOption: sortOption,
+          filterPrimaryCategory: filterPrimary,
+        );
+      }
+    } else {
+      result = await suggestedPapers();
     }
 
     if (!mounted || requestSerial != _searchRequestSerial) {
@@ -155,12 +199,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> runFeedSearch(String query) async {
+    _activeAdvancedQuery = null;
+    _lastAdvancedSummary = "";
     final category = categoryFromSearchInput(query);
     if (category != null) {
       selectedCategory = category;
       searchTermController.clear();
     } else {
-      selectedCategory = null;
       searchTermController.text = query;
     }
     await search(resetPagination: true);
@@ -172,6 +217,19 @@ class _HomePageState extends State<HomePage> {
       searchTermController.clear();
     }
     selectedCategory = category;
+    if (_activeAdvancedQuery != null) {
+      _activeAdvancedQuery = ArxivAdvancedQuery(
+        terms: _activeAdvancedQuery!.terms,
+        category: category,
+        includeCrossList: _activeAdvancedQuery!.includeCrossList,
+        dateFilterMode: _activeAdvancedQuery!.dateFilterMode,
+        specificYear: _activeAdvancedQuery!.specificYear,
+        fromDate: _activeAdvancedQuery!.fromDate,
+        toDate: _activeAdvancedQuery!.toDate,
+        sortOption: _activeAdvancedQuery!.sortOption,
+        pageSize: _activeAdvancedQuery!.pageSize,
+      );
+    }
     await search(resetPagination: true);
     _scrollToTop();
   }
@@ -187,9 +245,35 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> clearCategoryFilter() async {
     selectedCategory = null;
+    if (_activeAdvancedQuery != null) {
+      final remaining = ArxivAdvancedQuery(
+        terms: _activeAdvancedQuery!.terms,
+        category: null,
+        includeCrossList: _activeAdvancedQuery!.includeCrossList,
+        dateFilterMode: _activeAdvancedQuery!.dateFilterMode,
+        specificYear: _activeAdvancedQuery!.specificYear,
+        fromDate: _activeAdvancedQuery!.fromDate,
+        toDate: _activeAdvancedQuery!.toDate,
+        sortOption: _activeAdvancedQuery!.sortOption,
+        pageSize: _activeAdvancedQuery!.pageSize,
+      );
+      _activeAdvancedQuery = remaining.hasAnyCriteria ? remaining : null;
+      if (_activeAdvancedQuery == null) {
+        _lastAdvancedSummary = "";
+        searchTermController.clear();
+      }
+    }
     if (categoryFromSearchInput(searchTermController.text) != null) {
       searchTermController.clear();
     }
+    startPagination = 0;
+    await search(resetPagination: true);
+  }
+
+  Future<void> _clearAdvancedSearch() async {
+    _activeAdvancedQuery = null;
+    _lastAdvancedSummary = "";
+    searchTermController.clear();
     startPagination = 0;
     await search(resetPagination: true);
   }
@@ -211,27 +295,25 @@ class _HomePageState extends State<HomePage> {
   void _openAdvancedSearch() {
     showAdvancedSearchSheet(
       context,
+      initialQuery: _activeAdvancedQuery,
       initialCategory: selectedCategory,
       initialSortOption: sortOption,
       initialPageSize: maxContent,
       onApply: (advancedQuery) async {
-        final built = advancedQuery.buildSearchQuery();
+        final summary = advancedQuery.summaryLabel();
         setState(() {
           sortOption = advancedQuery.sortOption;
           maxContent = advancedQuery.pageSize;
           paginationGap = advancedQuery.pageSize;
-        });
-
-        final onlyCategory =
-            advancedQuery.category != null &&
-            built == advancedQuery.category!.query;
-        if (onlyCategory) {
           selectedCategory = advancedQuery.category;
-          searchTermController.clear();
-        } else {
-          selectedCategory = null;
-          searchTermController.text = built;
-        }
+          _activeAdvancedQuery = advancedQuery;
+          _lastAdvancedSummary = summary;
+          if (summary.isEmpty) {
+            searchTermController.clear();
+          } else {
+            searchTermController.text = summary;
+          }
+        });
         await search(resetPagination: true);
         _scrollToTop();
       },
@@ -254,32 +336,27 @@ class _HomePageState extends State<HomePage> {
     paperTitle = title;
 
     pdfURL = pdfUrlFor(currentURL);
-    var splitURL = pdfURL.split("/");
-    var id = splitURL[splitURL.length - 1];
-    var urlType = 0;
-    if (id.contains(".") == true) {
-      urlType = 1;
-    } else {
-      urlType = 2;
+    final splitURL = pdfURL.split("/");
+    final id = splitURL.isNotEmpty ? splitURL.last : "paper";
+    final sanitizedId = id.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+
+    final cacheDir = Directory(
+      '${(await getTemporaryDirectory()).path}/pdf_cache',
+    );
+    if (!await cacheDir.exists()) {
+      await cacheDir.create(recursive: true);
     }
+    savePath = '${cacheDir.path}/$sanitizedId.pdf';
 
-    final Uri parsedURL = Uri.parse(pdfURL);
-    savePath = '${(await getTemporaryDirectory()).path}/paper3.pdf';
-
-    if (urlType == 2) {
-      var result = await dio.downloadUri(parsedURL, savePath);
-      if (result.statusCode != 200) {}
-    }
-
+    if (!mounted) return;
     Navigator.push(
-      // ignore: use_build_context_synchronously
       context,
       MaterialPageRoute(
         builder: (context) => PDFViewer(
           paperTitle: paperTitle,
           savePath: savePath,
           pdfURL: pdfURL,
-          urlType: urlType,
+          urlType: 2,
           downloadPaper: downloadPaper,
         ),
       ),
@@ -580,17 +657,30 @@ class _HomePageState extends State<HomePage> {
               onOpenAdvancedSearch: _openAdvancedSearch,
               selectedCategory: selectedCategory,
             ),
-            if (selectedCategory != null)
+            if (selectedCategory != null || _activeAdvancedQuery != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(12.0, 0.0, 12.0, 6.0),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: InputChip(
-                    label: Text(categoryFilterLabel(selectedCategory!)),
-                    selected: true,
-                    onDeleted: clearCategoryFilter,
-                    visualDensity: VisualDensity.compact,
-                  ),
+                child: Wrap(
+                  spacing: 8.0,
+                  runSpacing: 6.0,
+                  children: [
+                    if (selectedCategory != null)
+                      InputChip(
+                        label: Text(categoryFilterLabel(selectedCategory!)),
+                        selected: true,
+                        onDeleted: clearCategoryFilter,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    if (_activeAdvancedQuery != null)
+                      InputChip(
+                        avatar: const Icon(Icons.tune_rounded, size: 16.0),
+                        label: const Text("Advanced search"),
+                        selected: true,
+                        onPressed: _openAdvancedSearch,
+                        onDeleted: _clearAdvancedSearch,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                  ],
                 ),
               ),
 

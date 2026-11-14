@@ -6,6 +6,7 @@ import 'package:arxiv/components/id_and_date.dart';
 import 'package:arxiv/components/summary_bottom_sheet.dart';
 import 'package:arxiv/models/paper.dart';
 import 'package:arxiv/pages/ai_chat_page.dart';
+import 'package:arxiv/services/collection_store.dart';
 import 'package:arxiv/services/main_page_style_store.dart';
 import 'package:arxiv/services/paper_notes_store.dart';
 import 'package:arxiv/theme/app_theme.dart';
@@ -23,6 +24,7 @@ class EachPaperCard extends StatefulWidget {
     required this.isBookmarked,
     this.onCardTap,
     this.onCategoryTap,
+    this.onCollectionChanged,
     this.notesRefreshToken = 0,
   });
 
@@ -32,6 +34,7 @@ class EachPaperCard extends StatefulWidget {
   final bool isBookmarked;
   final VoidCallback? onCardTap;
   final ValueChanged<String>? onCategoryTap;
+  final VoidCallback? onCollectionChanged;
   final int notesRefreshToken;
 
   @override
@@ -162,9 +165,144 @@ class _EachPaperCardState extends State<EachPaperCard> {
       }
       await bookmarksBox.put("bookmarks", newBookmarks);
       await Hive.close();
+      await CollectionStore().removePaperFromAllFolders(widget.eachPaper.id);
     }
     await checkIfBookmarked();
+    widget.onCollectionChanged?.call();
     setState(() {});
+  }
+
+  Future<void> _openFolderPicker() async {
+    await checkIfBookmarked();
+    if (!isBookmarked) {
+      Box bookmarksBox = await Hive.openBox("bookmarks");
+      List bookmarks = await bookmarksBox.get("bookmarks") ?? [];
+      bookmarks.add(widget.eachPaper);
+      await bookmarksBox.put("bookmarks", bookmarks);
+      await Hive.close();
+      await checkIfBookmarked();
+      widget.onCollectionChanged?.call();
+    }
+
+    if (!mounted) return;
+    final store = CollectionStore();
+    var folders = await store.loadFolders();
+    var assigned = (await store.foldersForPaper(widget.eachPaper.id)).toSet();
+
+    if (!mounted) return;
+    await showAppBottomSheet<void>(
+      context,
+      child: StatefulBuilder(
+        builder: (sheetContext, setSheetState) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(18.0, 4.0, 18.0, 18.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        "Save to collection folder",
+                        style: Theme.of(sheetContext).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () async {
+                        final controller = TextEditingController();
+                        final createdName = await showDialog<String>(
+                          context: sheetContext,
+                          builder: (dialogContext) => AlertDialog(
+                            title: const Text("New folder"),
+                            content: TextField(
+                              controller: controller,
+                              autofocus: true,
+                              decoration: const InputDecoration(
+                                labelText: "Folder name",
+                                hintText: "e.g. Diffusion, To Read",
+                              ),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(dialogContext),
+                                child: const Text("Cancel"),
+                              ),
+                              FilledButton(
+                                onPressed: () => Navigator.pop(
+                                  dialogContext,
+                                  controller.text.trim(),
+                                ),
+                                child: const Text("Create"),
+                              ),
+                            ],
+                          ),
+                        );
+                        controller.dispose();
+                        if (createdName == null || createdName.isEmpty) return;
+                        final folder = await store.createFolder(createdName);
+                        await store.togglePaperInFolder(
+                          widget.eachPaper.id,
+                          folder.id,
+                        );
+                        folders = await store.loadFolders();
+                        assigned = (await store.foldersForPaper(
+                          widget.eachPaper.id,
+                        )).toSet();
+                        setSheetState(() {});
+                        widget.onCollectionChanged?.call();
+                      },
+                      icon: const Icon(Icons.create_new_folder_outlined, size: 18.0),
+                      label: const Text("New folder"),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8.0),
+                if (folders.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16.0),
+                    child: Text(
+                      "No folders yet. Tap \"New folder\" to organize this paper.",
+                      style: Theme.of(sheetContext).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  )
+                else
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 280.0),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: folders.length,
+                      itemBuilder: (context, index) {
+                        final folder = folders[index];
+                        final checked = assigned.contains(folder.id);
+                        return CheckboxListTile(
+                          value: checked,
+                          title: Text(folder.name),
+                          secondary: const Icon(Icons.folder_outlined),
+                          onChanged: (_) async {
+                            await store.togglePaperInFolder(
+                              widget.eachPaper.id,
+                              folder.id,
+                            );
+                            assigned = (await store.foldersForPaper(
+                              widget.eachPaper.id,
+                            )).toSet();
+                            setSheetState(() {});
+                            widget.onCollectionChanged?.call();
+                          },
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Future<void> checkIfBookmarked() async {
@@ -315,6 +453,7 @@ class _EachPaperCardState extends State<EachPaperCard> {
                   ),
                   const SizedBox(width: 10.0),
                   IconButton(
+                    tooltip: "Bookmark",
                     onPressed: () {
                       bookmarkToggle();
                     },
@@ -325,6 +464,14 @@ class _EachPaperCardState extends State<EachPaperCard> {
                       color: isBookmarked
                           ? colorScheme.primary
                           : colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: "Save to folder",
+                    onPressed: _openFolderPicker,
+                    icon: Icon(
+                      Icons.folder_open_outlined,
+                      color: colorScheme.onSurfaceVariant,
                     ),
                   ),
                   IconButton(

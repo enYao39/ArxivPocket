@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:arxiv/models/paper.dart';
+import 'package:arxiv/services/arxiv_web_search.dart';
 import 'package:dio/dio.dart';
 import 'package:xml2json/xml2json.dart';
 
@@ -150,7 +151,18 @@ class Arxiv {
     int page = 0,
     int pageSize = 30,
     ArxivSortOption sortOption = ArxivSortOption.relevance,
+    String? filterPrimaryCategory,
+    bool useWebSearch = true,
   }) async {
+    if (useWebSearch && extractArxivId(term) == null) {
+      return searchWeb(
+        term,
+        page: page,
+        pageSize: pageSize,
+        sortOption: sortOption,
+        filterPrimaryCategory: filterPrimaryCategory,
+      );
+    }
     return _runRateLimitedRequest(
       () => _searchWithMetadata(
         term,
@@ -159,6 +171,95 @@ class Arxiv {
         sortOption: sortOption,
       ),
     );
+  }
+
+  /// Searches arXiv using the official `arxiv.org/search/` web interface
+  /// (backed by `arXiv/arxiv-search`).
+  static Future<ArxivSearchResult> searchWeb(
+    String query, {
+    int page = 0,
+    int pageSize = 25,
+    ArxivSortOption sortOption = ArxivSortOption.newest,
+    String? filterPrimaryCategory,
+    String? topic,
+  }) async {
+    return _runRateLimitedRequest(
+      () => _searchWebUri(
+        ArxivWebSearch.buildSimpleSearchUri(
+          query,
+          start: page,
+          pageSize: pageSize,
+          sortOption: sortOption,
+        ),
+        start: page,
+        pageSize: pageSize,
+        filterPrimaryCategory: filterPrimaryCategory,
+        topic: topic,
+      ),
+    );
+  }
+
+  /// Searches arXiv using the official `arxiv.org/search/advanced` endpoint.
+  static Future<ArxivSearchResult> advancedSearchWithMetadata(
+    ArxivAdvancedQuery query, {
+    int page = 0,
+    String? filterPrimaryCategory,
+    String? topic,
+  }) async {
+    return _runRateLimitedRequest(
+      () => _searchWebUri(
+        ArxivWebSearch.buildAdvancedSearchUri(query, start: page),
+        start: page,
+        pageSize: query.pageSize,
+        filterPrimaryCategory:
+            filterPrimaryCategory ??
+            (query.includeCrossList ? null : query.category?.code),
+        topic: topic,
+      ),
+    );
+  }
+
+  static Future<ArxivSearchResult> _searchWebUri(
+    Uri uri, {
+    required int start,
+    required int pageSize,
+    String? filterPrimaryCategory,
+    String? topic,
+  }) async {
+    try {
+      final response = await _dio.getUri<String>(
+        uri,
+        options: Options(
+          headers: const {
+            "Accept":
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          },
+        ),
+      );
+      final html = response.data?.toString() ?? "";
+      if (html.trim().isEmpty) {
+        return _failure(
+          "arXiv returned an empty response. Please try again.",
+          statusCode: response.statusCode,
+        );
+      }
+
+      return ArxivWebSearch.parseSearchHtml(
+        html,
+        start: start,
+        pageSize: pageSize,
+        filterPrimaryCategory: filterPrimaryCategory,
+        topic: topic,
+        statusCode: response.statusCode,
+      );
+    } on DioException catch (e) {
+      return _failure(
+        _messageForDioException(e),
+        statusCode: e.response?.statusCode,
+      );
+    } catch (e) {
+      return _failure("Could not read the arXiv response. Please try again.");
+    }
   }
 
   static Future<ArxivSearchResult> _searchWithMetadata(
