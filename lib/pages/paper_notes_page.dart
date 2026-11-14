@@ -28,8 +28,7 @@ class _PaperNotesPageState extends State<PaperNotesPage> {
   List<PaperNote> _notes = [];
   List<CollectionFolder> _folders = [];
   Map<String, List<String>> _paperFolderMap = {};
-  String? _selectedFolderId;
-  bool _unsortedOnly = false;
+  String? _openedFolderId;
   bool _isLoadingNotes = true;
 
   @override
@@ -48,9 +47,9 @@ class _PaperNotesPageState extends State<PaperNotesPage> {
       _notes = notes;
       _folders = folders;
       _paperFolderMap = paperFolderMap;
-      if (_selectedFolderId != null &&
-          !_folders.any((f) => f.id == _selectedFolderId)) {
-        _selectedFolderId = null;
+      if (_openedFolderId != null &&
+          !_folders.any((f) => f.id == _openedFolderId)) {
+        _openedFolderId = null;
       }
       _isLoadingNotes = false;
     });
@@ -126,126 +125,129 @@ class _PaperNotesPageState extends State<PaperNotesPage> {
     await _loadNotes();
   }
 
-  Widget _buildNotesList() {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    if (_isLoadingNotes) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    if (_notes.isEmpty) {
-      return Center(
-        child: Text(
-          "No paper notes yet",
-          style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 16.0),
-        ),
-      );
-    }
-
-    final filteredNotes = CollectionStore.filterNotes(
-      notes: _notes,
-      paperFolderMap: _paperFolderMap,
-      selectedFolderId: _selectedFolderId,
-      unsortedOnly: _unsortedOnly,
-    );
-    final unsortedCount = _notes
-        .where((n) => (_paperFolderMap[n.paperId] ?? const []).isEmpty)
-        .length;
-
-    return Column(
-      children: [
-        if (_folders.isNotEmpty)
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.fromLTRB(12.0, 8.0, 12.0, 4.0),
-            child: Row(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 8.0),
-                  child: ChoiceChip(
-                    label: Text("All (${_notes.length})"),
-                    selected: _selectedFolderId == null && !_unsortedOnly,
-                    onSelected: (_) {
-                      setState(() {
-                        _selectedFolderId = null;
-                        _unsortedOnly = false;
-                      });
-                    },
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(right: 8.0),
-                  child: ChoiceChip(
-                    label: Text("Unsorted ($unsortedCount)"),
-                    selected: _unsortedOnly,
-                    onSelected: (_) {
-                      setState(() {
-                        _selectedFolderId = null;
-                        _unsortedOnly = true;
-                      });
-                    },
-                  ),
-                ),
-                for (final folder in _folders)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8.0),
-                    child: ChoiceChip(
-                      avatar: const Icon(Icons.folder_outlined, size: 16.0),
-                      label: Text(
-                        "${folder.name} (${_notes.where((n) => (_paperFolderMap[n.paperId] ?? const []).contains(folder.id)).length})",
-                      ),
-                      selected: _selectedFolderId == folder.id,
-                      onSelected: (_) {
-                        setState(() {
-                          _selectedFolderId = folder.id;
-                          _unsortedOnly = false;
-                        });
-                      },
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        Expanded(
-          child: filteredNotes.isEmpty
-              ? Center(
-                  child: Text(
-                    "No paper notes in this folder.",
-                    style: TextStyle(
-                      color: colorScheme.onSurfaceVariant,
-                      fontSize: 16.0,
-                    ),
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _loadNotes,
-                  child: ListView.builder(
-                    padding: const EdgeInsets.symmetric(vertical: 8.0),
-                    itemCount: filteredNotes.length,
-                    itemBuilder: (context, index) {
-                      final note = filteredNotes[index];
-
-                      return PaperNoteCard(
-                        note: note,
-                        onPaperTap: () => _openPaperDetails(note),
-                        allowInlineView: true,
-                        allowInlineEdit: true,
-                        onSave: (body) => _saveInlineNote(note, body),
-                        onDelete: () => _confirmDeleteNote(note),
-                      );
-                    },
-                  ),
-                ),
-        ),
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("Paper Notes")),
-      body: _buildNotesList(),
+    final colorScheme = Theme.of(context).colorScheme;
+    final openedFolder = _openedFolderId == null
+        ? null
+        : _folders.where((f) => f.id == _openedFolderId).firstOrNull;
+    final folderNotes = openedFolder == null
+        ? const <PaperNote>[]
+        : CollectionStore.filterNotes(
+            notes: _notes,
+            paperFolderMap: _paperFolderMap,
+            selectedFolderId: openedFolder.id,
+          );
+
+    return PopScope(
+      canPop: openedFolder == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && openedFolder != null) {
+          setState(() {
+            _openedFolderId = null;
+          });
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: openedFolder != null
+              ? BackButton(
+                  onPressed: () {
+                    setState(() {
+                      _openedFolderId = null;
+                    });
+                  },
+                )
+              : null,
+          title: Text(
+            openedFolder == null
+                ? "Paper Notes"
+                : "${openedFolder.name} Notes",
+          ),
+        ),
+        body: _isLoadingNotes
+            ? const Center(child: CircularProgressIndicator())
+            : openedFolder == null
+            ? RefreshIndicator(
+                onRefresh: _loadNotes,
+                child: ListView.separated(
+                  padding: const EdgeInsets.all(12.0),
+                  itemCount: _folders.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 8.0),
+                  itemBuilder: (context, index) {
+                    final folder = _folders[index];
+                    final count = CollectionStore.filterNotes(
+                      notes: _notes,
+                      paperFolderMap: _paperFolderMap,
+                      selectedFolderId: folder.id,
+                    ).length;
+
+                    return Card(
+                      elevation: 0,
+                      color: colorScheme.surfaceContainerLow,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14.0),
+                        side: BorderSide(
+                          color: colorScheme.outlineVariant.withValues(
+                            alpha: 0.45,
+                          ),
+                        ),
+                      ),
+                      child: ListTile(
+                        leading: Icon(
+                          folder.isDefault
+                              ? Icons.folder_special_outlined
+                              : Icons.folder_outlined,
+                          color: colorScheme.primary,
+                        ),
+                        title: Text(
+                          folder.name,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(
+                          count == 1 ? "1 note" : "$count notes",
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () {
+                          setState(() {
+                            _openedFolderId = folder.id;
+                          });
+                        },
+                      ),
+                    );
+                  },
+                ),
+              )
+            : folderNotes.isEmpty
+            ? Center(
+                child: Text(
+                  "No paper notes in ${openedFolder.name} yet.",
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 16.0,
+                  ),
+                ),
+              )
+            : RefreshIndicator(
+                onRefresh: _loadNotes,
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  itemCount: folderNotes.length,
+                  itemBuilder: (context, index) {
+                    final note = folderNotes[index];
+
+                    return PaperNoteCard(
+                      note: note,
+                      onPaperTap: () => _openPaperDetails(note),
+                      allowInlineView: true,
+                      allowInlineEdit: true,
+                      onSave: (body) => _saveInlineNote(note, body),
+                      onDelete: () => _confirmDeleteNote(note),
+                    );
+                  },
+                ),
+              ),
+      ),
     );
   }
 }

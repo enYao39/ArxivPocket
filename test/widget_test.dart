@@ -225,8 +225,12 @@ void main() {
     try {
       final store = CollectionStore();
 
+      final initialFolders = await store.loadFolders();
+      expect(initialFolders.length, 1);
+      expect(initialFolders.first.id, CollectionStore.defaultFolderId);
+
       final folder = await store.createFolder('Diffusion');
-      expect((await store.loadFolders()).length, 1);
+      expect((await store.loadFolders()).length, 2);
 
       await store.togglePaperInFolder('2006.06236v2', folder.id);
       final map = await store.loadPaperFolderMap();
@@ -246,7 +250,7 @@ void main() {
         CollectionStore.filterPapers(
           papers: [p1, p2],
           paperFolderMap: map,
-          unsortedOnly: true,
+          selectedFolderId: CollectionStore.defaultFolderId,
         ).map((p) => p.id),
         ['2401.00001'],
       );
@@ -279,17 +283,19 @@ void main() {
         CollectionStore.filterNotes(
           notes: [n1, n2],
           paperFolderMap: map,
-          unsortedOnly: true,
+          selectedFolderId: CollectionStore.defaultFolderId,
         ).map((n) => n.paperId),
         ['2401.00001'],
       );
 
       await store.renameFolder(folder.id, 'Generative Models');
-      expect((await store.loadFolders()).first.name, 'Generative Models');
+      expect((await store.loadFolders())[1].name, 'Generative Models');
 
-    await store.deleteFolder(folder.id);
-    expect(await store.loadFolders(), isEmpty);
-    expect(await store.loadPaperFolderMap(), isEmpty);
+      await store.deleteFolder(folder.id);
+      final remaining = await store.loadFolders();
+      expect(remaining.length, 1);
+      expect(remaining.first.id, CollectionStore.defaultFolderId);
+      expect(await store.loadPaperFolderMap(), isEmpty);
     } finally {
       await Hive.close();
       if (await tempDir.exists()) {

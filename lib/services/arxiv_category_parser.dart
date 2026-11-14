@@ -42,7 +42,8 @@ ArxivCategory? categoryForFilterLabel(String label) {
   if (normalizedLabel.isEmpty) return null;
 
   for (final category in arxivCategories) {
-    if (categoryFilterLabel(category) == normalizedLabel) {
+    if (categoryFilterLabel(category) == normalizedLabel ||
+        "${category.code} - ${category.label}" == normalizedLabel) {
       return category;
     }
   }
@@ -142,6 +143,5 @@ Future<void> handleCategoryChipTap({
 }
 
 String categoryChipLabel(ArxivCategory category) => category.label;
-// Written into the search field when a category filter is active.
-String categoryFilterLabel(ArxivCategory category) =>
-    "${category.code} - ${category.label}";
+// Concise category code shown on active category chips and filter buttons.
+String categoryFilterLabel(ArxivCategory category) => category.code;

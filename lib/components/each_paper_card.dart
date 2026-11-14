@@ -146,75 +146,118 @@ class _EachPaperCardState extends State<EachPaperCard> {
 
   bool isBookmarked = false;
 
+  Future<void> _ensureBookmarked() async {
+    Box bookmarksBox = await Hive.openBox("bookmarks");
+    List bookmarks = await bookmarksBox.get("bookmarks") ?? [];
+    final exists = bookmarks.any((b) => b.id == widget.eachPaper.id);
+    if (!exists) {
+      bookmarks.add(widget.eachPaper);
+      await bookmarksBox.put("bookmarks", bookmarks);
+    }
+    await Hive.close();
+  }
+
+  Future<void> _removeBookmark() async {
+    Box bookmarksBox = await Hive.openBox("bookmarks");
+    List bookmarks = await bookmarksBox.get("bookmarks") ?? [];
+    final newBookmarks = bookmarks
+        .where((b) => b.id != widget.eachPaper.id)
+        .toList();
+    await bookmarksBox.put("bookmarks", newBookmarks);
+    await Hive.close();
+    await CollectionStore().removePaperFromAllFolders(widget.eachPaper.id);
+  }
+
   void bookmarkToggle() async {
     await checkIfBookmarked();
     if (isBookmarked == false) {
-      Box bookmarksBox = await Hive.openBox("bookmarks");
-      List bookmarks = await bookmarksBox.get("bookmarks") ?? [];
-      bookmarks.add(widget.eachPaper);
-      await bookmarksBox.put("bookmarks", bookmarks);
-      await Hive.close();
+      await _ensureBookmarked();
+      await CollectionStore().setPaperFolders(widget.eachPaper.id, [
+        CollectionStore.defaultFolderId,
+      ]);
     } else {
-      Box bookmarksBox = await Hive.openBox("bookmarks");
-      List bookmarks = await bookmarksBox.get("bookmarks") ?? [];
-      List newBookmarks = [];
-      for (var eachBookmark in bookmarks) {
-        if (eachBookmark.id != widget.eachPaper.id) {
-          newBookmarks.add(eachBookmark);
-        }
-      }
-      await bookmarksBox.put("bookmarks", newBookmarks);
-      await Hive.close();
-      await CollectionStore().removePaperFromAllFolders(widget.eachPaper.id);
+      await _removeBookmark();
     }
     await checkIfBookmarked();
     widget.onCollectionChanged?.call();
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   Future<void> _openFolderPicker() async {
     await checkIfBookmarked();
-    if (!isBookmarked) {
-      Box bookmarksBox = await Hive.openBox("bookmarks");
-      List bookmarks = await bookmarksBox.get("bookmarks") ?? [];
-      bookmarks.add(widget.eachPaper);
-      await bookmarksBox.put("bookmarks", bookmarks);
-      await Hive.close();
-      await checkIfBookmarked();
-      widget.onCollectionChanged?.call();
-    }
-
-    if (!mounted) return;
     final store = CollectionStore();
     var folders = await store.loadFolders();
     var assigned = (await store.foldersForPaper(widget.eachPaper.id)).toSet();
+    if (isBookmarked && assigned.isEmpty) {
+      assigned = {CollectionStore.defaultFolderId};
+    }
 
     if (!mounted) return;
-    await showAppBottomSheet<void>(
-      context,
-      child: StatefulBuilder(
-        builder: (sheetContext, setSheetState) {
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(18.0, 4.0, 18.0, 18.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        "Save to collection folder",
-                        style: Theme.of(sheetContext).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          return AlertDialog(
+            title: const Text("Collect to folder"),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 280.0),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: folders.length,
+                      itemBuilder: (context, index) {
+                        final folder = folders[index];
+                        final checked = assigned.contains(folder.id);
+                        return CheckboxListTile(
+                          contentPadding: EdgeInsets.zero,
+                          value: checked,
+                          title: Text(folder.name),
+                          secondary: Icon(
+                            folder.isDefault
+                                ? Icons.folder_special_outlined
+                                : Icons.folder_outlined,
+                          ),
+                          onChanged: (value) async {
+                            if (value == true) {
+                              assigned.add(folder.id);
+                              await _ensureBookmarked();
+                              await store.setPaperFolders(
+                                widget.eachPaper.id,
+                                assigned.toList(),
+                              );
+                            } else {
+                              assigned.remove(folder.id);
+                              if (assigned.isEmpty) {
+                                await _removeBookmark();
+                              } else {
+                                await store.setPaperFolders(
+                                  widget.eachPaper.id,
+                                  assigned.toList(),
+                                );
+                              }
+                            }
+                            await checkIfBookmarked();
+                            setDialogState(() {});
+                            widget.onCollectionChanged?.call();
+                          },
+                        );
+                      },
                     ),
-                    TextButton.icon(
+                  ),
+                  const SizedBox(height: 8.0),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
                       onPressed: () async {
                         final controller = TextEditingController();
                         final createdName = await showDialog<String>(
-                          context: sheetContext,
-                          builder: (dialogContext) => AlertDialog(
+                          context: dialogContext,
+                          builder: (nameDialogContext) => AlertDialog(
                             title: const Text("New folder"),
                             content: TextField(
                               controller: controller,
@@ -226,12 +269,13 @@ class _EachPaperCardState extends State<EachPaperCard> {
                             ),
                             actions: [
                               TextButton(
-                                onPressed: () => Navigator.pop(dialogContext),
+                                onPressed: () =>
+                                    Navigator.pop(nameDialogContext),
                                 child: const Text("Cancel"),
                               ),
                               FilledButton(
                                 onPressed: () => Navigator.pop(
-                                  dialogContext,
+                                  nameDialogContext,
                                   controller.text.trim(),
                                 ),
                                 child: const Text("Create"),
@@ -242,63 +286,33 @@ class _EachPaperCardState extends State<EachPaperCard> {
                         controller.dispose();
                         if (createdName == null || createdName.isEmpty) return;
                         final folder = await store.createFolder(createdName);
-                        await store.togglePaperInFolder(
+                        assigned.add(folder.id);
+                        await _ensureBookmarked();
+                        await store.setPaperFolders(
                           widget.eachPaper.id,
-                          folder.id,
+                          assigned.toList(),
                         );
                         folders = await store.loadFolders();
-                        assigned = (await store.foldersForPaper(
-                          widget.eachPaper.id,
-                        )).toSet();
-                        setSheetState(() {});
+                        await checkIfBookmarked();
+                        setDialogState(() {});
                         widget.onCollectionChanged?.call();
                       },
-                      icon: const Icon(Icons.create_new_folder_outlined, size: 18.0),
+                      icon: const Icon(
+                        Icons.create_new_folder_outlined,
+                        size: 18.0,
+                      ),
                       label: const Text("New folder"),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 8.0),
-                if (folders.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 16.0),
-                    child: Text(
-                      "No folders yet. Tap \"New folder\" to organize this paper.",
-                      style: Theme.of(sheetContext).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  )
-                else
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 280.0),
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: folders.length,
-                      itemBuilder: (context, index) {
-                        final folder = folders[index];
-                        final checked = assigned.contains(folder.id);
-                        return CheckboxListTile(
-                          value: checked,
-                          title: Text(folder.name),
-                          secondary: const Icon(Icons.folder_outlined),
-                          onChanged: (_) async {
-                            await store.togglePaperInFolder(
-                              widget.eachPaper.id,
-                              folder.id,
-                            );
-                            assigned = (await store.foldersForPaper(
-                              widget.eachPaper.id,
-                            )).toSet();
-                            setSheetState(() {});
-                            widget.onCollectionChanged?.call();
-                          },
-                        );
-                      },
-                    ),
                   ),
-              ],
+                ],
+              ),
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text("Done"),
+              ),
+            ],
           );
         },
       ),
@@ -452,26 +466,19 @@ class _EachPaperCardState extends State<EachPaperCard> {
                     ),
                   ),
                   const SizedBox(width: 10.0),
-                  IconButton(
-                    tooltip: "Bookmark",
-                    onPressed: () {
-                      bookmarkToggle();
-                    },
-                    icon: Icon(
-                      isBookmarked == false
-                          ? Icons.bookmark_border
-                          : Icons.bookmark,
-                      color: isBookmarked
-                          ? colorScheme.primary
-                          : colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: "Save to folder",
-                    onPressed: _openFolderPicker,
-                    icon: Icon(
-                      Icons.folder_open_outlined,
-                      color: colorScheme.onSurfaceVariant,
+                  GestureDetector(
+                    onLongPress: _openFolderPicker,
+                    child: IconButton(
+                      tooltip: "Collect (long press for folders)",
+                      onPressed: bookmarkToggle,
+                      icon: Icon(
+                        isBookmarked == false
+                            ? Icons.bookmark_border
+                            : Icons.bookmark,
+                        color: isBookmarked
+                            ? colorScheme.primary
+                            : colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                   IconButton(

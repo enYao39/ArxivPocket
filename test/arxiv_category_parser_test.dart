@@ -244,7 +244,8 @@ void main() {
     test('requires an exact filter label match', () {
       expect(categoryForFilterLabel('cs.LG - Machine Learning')?.code, 'cs.LG');
       expect(categoryForFilterLabel('Machine Learning'), isNull);
-      expect(categoryForFilterLabel('cs.LG'), isNull);
+      expect(categoryForFilterLabel('cs.LG')?.code, 'cs.LG');
+      expect(categoryForFilterLabel('unknown.XX'), isNull);
     });
   });
 
@@ -259,8 +260,8 @@ void main() {
       expect(categoryChipLabel(category), 'Machine Learning');
     });
 
-    test('categoryFilterLabel combines code and human label', () {
-      expect(categoryFilterLabel(category), 'cs.LG - Machine Learning');
+    test('categoryFilterLabel uses the concise category code', () {
+      expect(categoryFilterLabel(category), 'cs.LG');
     });
   });
 

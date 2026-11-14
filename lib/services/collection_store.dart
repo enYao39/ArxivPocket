@@ -10,6 +10,8 @@ class CollectionFolder {
   final String id;
   final String name;
 
+  bool get isDefault => id == CollectionStore.defaultFolderId;
+
   Map<String, dynamic> toJson() => {"id": id, "name": name};
 
   factory CollectionFolder.fromJson(Map<String, dynamic> json) {
@@ -25,6 +27,13 @@ class CollectionFolder {
 }
 
 class CollectionStore {
+  static const String defaultFolderId = "default";
+  static const String defaultFolderName = "Default";
+  static const CollectionFolder defaultFolder = CollectionFolder(
+    id: defaultFolderId,
+    name: defaultFolderName,
+  );
+
   static const String _boxName = "bookmark_collections";
   static const String _foldersKey = "collection_folders_v1";
   static const String _paperFoldersKey = "collection_paper_folders_v1";
@@ -34,27 +43,33 @@ class CollectionStore {
   Future<List<CollectionFolder>> loadFolders() async {
     final box = await _openBox();
     final raw = box.get(_foldersKey);
-    if (raw is! String || raw.trim().isEmpty) return [];
-    try {
-      final decoded = json.decode(raw);
-      if (decoded is! List) return [];
-      return decoded
-          .whereType<Map>()
-          .map(
-            (item) => CollectionFolder.fromJson(Map<String, dynamic>.from(item)),
-          )
-          .where((folder) => folder.id.isNotEmpty && folder.name.isNotEmpty)
-          .toList();
-    } catch (_) {
-      return [];
+    final custom = <CollectionFolder>[];
+    if (raw is String && raw.trim().isNotEmpty) {
+      try {
+        final decoded = json.decode(raw);
+        if (decoded is List) {
+          for (final item in decoded.whereType<Map>()) {
+            final folder = CollectionFolder.fromJson(
+              Map<String, dynamic>.from(item),
+            );
+            if (folder.id.isNotEmpty &&
+                folder.name.isNotEmpty &&
+                folder.id != defaultFolderId) {
+              custom.add(folder);
+            }
+          }
+        }
+      } catch (_) {}
     }
+    return [defaultFolder, ...custom];
   }
 
-  Future<void> _saveFolders(List<CollectionFolder> folders) async {
+  Future<void> _saveCustomFolders(List<CollectionFolder> folders) async {
     final box = await _openBox();
+    final customOnly = folders.where((f) => f.id != defaultFolderId).toList();
     await box.put(
       _foldersKey,
-      json.encode(folders.map((f) => f.toJson()).toList()),
+      json.encode(customOnly.map((f) => f.toJson()).toList()),
     );
   }
 
@@ -67,11 +82,12 @@ class CollectionStore {
     final id = "folder_${DateTime.now().microsecondsSinceEpoch}";
     final created = CollectionFolder(id: id, name: trimmed);
     folders.add(created);
-    await _saveFolders(folders);
+    await _saveCustomFolders(folders);
     return created;
   }
 
   Future<void> renameFolder(String folderId, String newName) async {
+    if (folderId == defaultFolderId) return;
     final trimmed = newName.trim();
     if (trimmed.isEmpty) return;
     final folders = await loadFolders();
@@ -81,13 +97,14 @@ class CollectionStore {
               folder.id == folderId ? folder.copyWith(name: trimmed) : folder,
         )
         .toList();
-    await _saveFolders(updated);
+    await _saveCustomFolders(updated);
   }
 
   Future<void> deleteFolder(String folderId) async {
+    if (folderId == defaultFolderId) return;
     final folders = await loadFolders();
     folders.removeWhere((folder) => folder.id == folderId);
-    await _saveFolders(folders);
+    await _saveCustomFolders(folders);
 
     final map = await loadPaperFolderMap();
     var changed = false;
@@ -178,47 +195,49 @@ class CollectionStore {
     }
   }
 
+  static bool paperBelongsToFolder({
+    required String paperId,
+    required Map<String, List<String>> paperFolderMap,
+    required String folderId,
+  }) {
+    final assigned = paperFolderMap[paperId] ?? const [];
+    if (folderId == defaultFolderId) {
+      return assigned.isEmpty || assigned.contains(defaultFolderId);
+    }
+    return assigned.contains(folderId);
+  }
+
   static List<Paper> filterPapers({
     required List<Paper> papers,
     required Map<String, List<String>> paperFolderMap,
     String? selectedFolderId,
-    bool unsortedOnly = false,
   }) {
-    if (unsortedOnly) {
-      return papers
-          .where((p) => (paperFolderMap[p.id] ?? const []).isEmpty)
-          .toList();
-    }
-    if (selectedFolderId != null) {
-      return papers
-          .where(
-            (p) => (paperFolderMap[p.id] ?? const []).contains(selectedFolderId),
-          )
-          .toList();
-    }
-    return papers;
+    if (selectedFolderId == null) return papers;
+    return papers
+        .where(
+          (p) => paperBelongsToFolder(
+            paperId: p.id,
+            paperFolderMap: paperFolderMap,
+            folderId: selectedFolderId,
+          ),
+        )
+        .toList();
   }
 
   static List<PaperNote> filterNotes({
     required List<PaperNote> notes,
     required Map<String, List<String>> paperFolderMap,
     String? selectedFolderId,
-    bool unsortedOnly = false,
   }) {
-    if (unsortedOnly) {
-      return notes
-          .where((n) => (paperFolderMap[n.paperId] ?? const []).isEmpty)
-          .toList();
-    }
-    if (selectedFolderId != null) {
-      return notes
-          .where(
-            (n) => (paperFolderMap[n.paperId] ?? const []).contains(
-              selectedFolderId,
-            ),
-          )
-          .toList();
-    }
-    return notes;
+    if (selectedFolderId == null) return notes;
+    return notes
+        .where(
+          (n) => paperBelongsToFolder(
+            paperId: n.paperId,
+            paperFolderMap: paperFolderMap,
+            folderId: selectedFolderId,
+          ),
+        )
+        .toList();
   }
 }
