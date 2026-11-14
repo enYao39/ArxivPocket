@@ -6,6 +6,7 @@ import 'package:arxiv/data/arxiv_categories.dart';
 import 'package:arxiv/models/paper.dart';
 import 'package:arxiv/models/paper_note.dart';
 import 'package:arxiv/services/aosp_tts_service.dart';
+import 'package:arxiv/services/app_update_service.dart';
 import 'package:arxiv/services/arxiv_update_schedule.dart';
 import 'package:arxiv/services/collection_store.dart';
 import 'package:arxiv/services/main_page_style_store.dart';
@@ -438,5 +439,12 @@ void main() {
       r'We study \textbf{diffusion} models where $x_t \in \mathbb{R}^d$.',
     );
     expect(cleaned, 'We study diffusion models where x t R ^d .');
+  });
+
+  test('AppUpdateService.isNewerVersion compares semantic versions', () {
+    expect(AppUpdateService.isNewerVersion('v3.0.6', '3.0.5'), isTrue);
+    expect(AppUpdateService.isNewerVersion('3.1.0', '3.0.5'), isTrue);
+    expect(AppUpdateService.isNewerVersion('3.0.5', '3.0.5'), isFalse);
+    expect(AppUpdateService.isNewerVersion('v3.0.4', '3.0.5'), isFalse);
   });
 }

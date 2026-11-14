@@ -1,10 +1,13 @@
 import "package:arxiv/pages/how_to_use.dart";
+import "package:arxiv/services/app_update_service.dart";
 import "package:arxiv/services/main_page_style_store.dart";
 import "package:arxiv/services/pdf_cache_store.dart";
 import "package:arxiv/theme/app_theme.dart";
+import "package:dio/dio.dart";
 import "package:flutter/material.dart";
 import "package:hive/hive.dart";
 import "package:theme_provider/theme_provider.dart";
+import "package:url_launcher/url_launcher.dart";
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -15,7 +18,9 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   final PdfCacheStore _pdfCacheStore = PdfCacheStore();
+  final AppUpdateService _updateService = AppUpdateService();
   var toolsOn = true;
+  bool _checkingUpdate = false;
   int _pdfCacheLimitMb = PdfCacheStore.defaultMaxCacheMb;
   int _cachedPdfCount = 0;
   int _cachedPdfBytes = 0;
@@ -60,6 +65,99 @@ class _SettingsPageState extends State<SettingsPage> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text("PDF cache cleared.")));
+  }
+
+  Future<void> _checkForUpdates() async {
+    if (_checkingUpdate) return;
+    setState(() {
+      _checkingUpdate = true;
+    });
+
+    try {
+      final info = await _updateService.checkForUpdate();
+      if (!mounted) return;
+      if (info.hasUpdate) {
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(
+              info.releaseName?.isNotEmpty == true
+                  ? info.releaseName!
+                  : "Update available (v${info.latestVersion})",
+            ),
+            content: SingleChildScrollView(
+              child: Text(
+                info.releaseNotes?.isNotEmpty == true
+                    ? "Current: v${info.currentVersion}\nLatest: v${info.latestVersion}\n\n${info.releaseNotes}"
+                    : "A new version (v${info.latestVersion}) is available. You are on v${info.currentVersion}.",
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text("Later"),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                  launchUrl(
+                    Uri.parse(info.apkDownloadUrl ?? info.releaseUrl),
+                    mode: LaunchMode.externalApplication,
+                  );
+                },
+                child: Text(
+                  info.apkDownloadUrl != null ? "Download APK" : "View Release",
+                ),
+              ),
+            ],
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              "You're on the latest version (v${info.currentVersion}).",
+            ),
+          ),
+        );
+      }
+    } on DioException catch (e) {
+      if (!mounted) return;
+      final status = e.response?.statusCode;
+      if (status == 404) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text("No published GitHub releases found yet."),
+            action: SnackBarAction(
+              label: "Releases",
+              onPressed: () {
+                launchUrl(
+                  Uri.parse(AppUpdateService.releasesPageUrl),
+                  mode: LaunchMode.externalApplication,
+                );
+              },
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Could not check for updates: ${e.message ?? e}"),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Could not check for updates: $e")));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _checkingUpdate = false;
+        });
+      }
+    }
   }
 
   Future<void> saveToolsSetting(bool value) async {
@@ -189,6 +287,14 @@ class _SettingsPageState extends State<SettingsPage> {
                 MaterialPageRoute(builder: (context) => const HowToUsePage()),
               );
             },
+          ),
+          _SettingsActionTile(
+            icon: Icons.system_update_outlined,
+            title: "Check for Updates",
+            subtitle: _checkingUpdate
+                ? "Checking for updates..."
+                : "Current version: v${AppUpdateService.currentVersion}",
+            onTap: _checkForUpdates,
           ),
         ],
       ),
