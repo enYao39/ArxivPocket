@@ -186,7 +186,7 @@ void main() {
           </div>
           <p class="title is-5 mathjax">Primary CV Paper</p>
           <p class="authors"><span class="has-text-black-bis has-text-weight-semibold">Authors:</span><a href="#">Alice</a>, <a href="#">Bob</a></p>
-          <p class="abstract mathjax"><span class="abstract-full has-text-grey-dark mathjax">Full abstract text here.</span></p>
+          <p class="abstract mathjax"><span class="abstract-full has-text-grey-dark mathjax">Understanding <span class="search-hit mathjax">Hammersley</span> sampling. Second sentence continues after the hit.<a class="is-size-7">Less</a></span></p>
           <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 10 June, 2020;</p>
         </li>
         <li class="arxiv-result">
@@ -212,6 +212,10 @@ void main() {
     expect(allResults.papers.length, 2);
     expect(allResults.papers.first.id, '2006.06236v2');
     expect(allResults.papers.first.primaryCategory, 'cs.CV');
+    expect(
+      allResults.papers.first.summary,
+      contains('Second sentence continues after the hit.'),
+    );
 
     final primaryOnly = ArxivWebSearch.parseSearchHtml(
       sampleHtml,

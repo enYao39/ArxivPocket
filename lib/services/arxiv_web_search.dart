@@ -322,13 +322,9 @@ class ArxivWebSearch {
       }
     }
 
-    var rawSummary = "";
-    final fullAbsMatch = RegExp(
-      r'<span class="abstract-full[^"]*"[^>]*>([\s\S]*?)</span>',
-    ).firstMatch(block);
-    if (fullAbsMatch != null) {
-      rawSummary = fullAbsMatch.group(1)!;
-    } else {
+    var rawSummary =
+        _extractBalancedSpanByClass(block, "abstract-full") ?? "";
+    if (rawSummary.isEmpty) {
       final absParaMatch = RegExp(
         r'<p class="abstract[^"]*">([\s\S]*?)</p>',
       ).firstMatch(block);
@@ -369,6 +365,30 @@ class ArxivWebSearch {
             .toList(),
       },
     );
+  }
+
+  static String? _extractBalancedSpanByClass(String html, String classPrefix) {
+    final openMatch = RegExp(
+      '<span class="$classPrefix[^"]*"[^>]*>',
+      caseSensitive: false,
+    ).firstMatch(html);
+    if (openMatch == null) return null;
+
+    final start = openMatch.end;
+    var depth = 1;
+    final tagRegex = RegExp(r'<span\b[^>]*>|</span>', caseSensitive: false);
+    for (final match in tagRegex.allMatches(html, start)) {
+      final tag = match.group(0)!.toLowerCase();
+      if (tag.startsWith('</span')) {
+        depth--;
+        if (depth == 0) {
+          return html.substring(start, match.start);
+        }
+      } else {
+        depth++;
+      }
+    }
+    return html.substring(start);
   }
 
   static String _cleanHtmlText(String html) {
