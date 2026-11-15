@@ -477,4 +477,32 @@ void main() {
       isTrue,
     );
   });
+
+  test('AppUpdateService web fallback helpers parse tag, date, and apk url', () {
+    expect(
+      AppUpdateService.extractTagFromReleaseUri(
+        Uri.parse('https://github.com/enYao39/ArxivPocket/releases/tag/1.0.1'),
+      ),
+      '1.0.1',
+    );
+    expect(
+      AppUpdateService.extractTagFromReleaseUri(
+        Uri.parse('https://github.com/enYao39/ArxivPocket/releases/latest'),
+      ),
+      isNull,
+    );
+
+    final publishedAt = AppUpdateService.extractPublishedAtFromHtml(
+      '<relative-time class="no-wrap" prefix="" datetime="2026-11-14T12:39:06Z">Nov 14, 2026</relative-time>',
+    );
+    expect(publishedAt, DateTime.utc(2026, 11, 14, 12, 39, 6));
+
+    final apkUrl = AppUpdateService.extractFirstApkUrlFromHtml(
+      '<a href="/enYao39/ArxivPocket/releases/download/1.0.1/app-arm64-v8a-release.apk">arm64</a>',
+    );
+    expect(
+      apkUrl,
+      'https://github.com/enYao39/ArxivPocket/releases/download/1.0.1/app-arm64-v8a-release.apk',
+    );
+  });
 }
