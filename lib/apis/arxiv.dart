@@ -64,13 +64,18 @@ class Arxiv {
   static const _host = "export.arxiv.org";
   static const _path = "/api/query";
   static const _minimumRequestInterval = Duration(seconds: 3);
+  static const _minimumWebRequestInterval = Duration(milliseconds: 800);
 
   static final _dio = Dio(
     BaseOptions(
-      connectTimeout: const Duration(seconds: 8),
-      receiveTimeout: const Duration(seconds: 15),
-      sendTimeout: const Duration(seconds: 8),
+      connectTimeout: const Duration(seconds: 20),
+      receiveTimeout: const Duration(seconds: 40),
+      sendTimeout: const Duration(seconds: 15),
       responseType: ResponseType.plain,
+      headers: const {
+        "User-Agent":
+            "ArxivPocket/3.0.5 (Android; +https://github.com/enYao39/ArxivPocket)",
+      },
     ),
   );
   static Future<void> _requestQueue = Future.value();
@@ -196,6 +201,7 @@ class Arxiv {
         filterPrimaryCategory: filterPrimaryCategory,
         topic: topic,
       ),
+      minInterval: _minimumWebRequestInterval,
     );
   }
 
@@ -216,6 +222,7 @@ class Arxiv {
             (query.includeCrossList ? null : query.category?.code),
         topic: topic,
       ),
+      minInterval: _minimumWebRequestInterval,
     );
   }
 
@@ -227,7 +234,7 @@ class Arxiv {
     String? topic,
   }) async {
     try {
-      final response = await _dio.getUri<String>(
+      final response = await _getUriWithRetry(
         uri,
         options: Options(
           headers: const {
@@ -273,7 +280,7 @@ class Arxiv {
     final rawXml = Xml2Json();
 
     try {
-      final response = await _dio.getUri<String>(
+      final response = await _getUriWithRetry(
         queryUriFor(
           term,
           page: page,
@@ -441,13 +448,47 @@ class Arxiv {
     ).then((result) => result.papers);
   }
 
-  static Future<T> _runRateLimitedRequest<T>(Future<T> Function() request) {
+  static Future<Response<String>> _getUriWithRetry(
+    Uri uri, {
+    Options? options,
+    int maxRetries = 2,
+  }) async {
+    var attempt = 0;
+    while (true) {
+      try {
+        return await _dio.getUri<String>(uri, options: options);
+      } on DioException catch (e) {
+        final status = e.response?.statusCode;
+        final isTransientStatus =
+            status == 429 ||
+            status == 500 ||
+            status == 502 ||
+            status == 503 ||
+            status == 504;
+        final isTransientType =
+            e.type == DioExceptionType.connectionTimeout ||
+            e.type == DioExceptionType.receiveTimeout ||
+            e.type == DioExceptionType.sendTimeout ||
+            e.type == DioExceptionType.connectionError;
+
+        if (attempt >= maxRetries || (!isTransientStatus && !isTransientType)) {
+          rethrow;
+        }
+        attempt++;
+        final delaySeconds = attempt;
+        await Future.delayed(Duration(seconds: delaySeconds));
+      }
+    }
+  }
+
+  static Future<T> _runRateLimitedRequest<T>(
+    Future<T> Function() request, {
+    Duration minInterval = _minimumRequestInterval,
+  }) {
     final queuedRequest = _requestQueue.then((_) async {
       final lastRequestStartedAt = _lastRequestStartedAt;
       if (lastRequestStartedAt != null) {
-        final nextAllowedStart = lastRequestStartedAt.add(
-          _minimumRequestInterval,
-        );
+        final nextAllowedStart = lastRequestStartedAt.add(minInterval);
         final wait = nextAllowedStart.difference(DateTime.now());
         if (!wait.isNegative) {
           await Future.delayed(wait);
