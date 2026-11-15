@@ -23,7 +23,8 @@ class AppUpdateInfo {
 }
 
 class AppUpdateService {
-  static const String currentVersion = "3.0.5";
+  // Fork release line starts at 1.0.0 (independent of upstream pubspec 3.0.5).
+  static const String currentVersion = "1.0.1";
   static const String buildTag = String.fromEnvironment('RELEASE_TAG');
   static const String buildDateIso = String.fromEnvironment(
     'BUILD_DATE',
@@ -203,10 +204,14 @@ class AppUpdateService {
     final trimmedTag = latestTag.trim();
     if (trimmedTag.isEmpty) return false;
 
-    // When built by a GitHub Release workflow, compare exact release tags so
-    // custom release tags work without bumping pubspec.yaml.
-    if (installedTag.trim().isNotEmpty) {
-      return trimmedTag != installedTag.trim();
+    // When built by a GitHub Release workflow, compare against the release tag
+    // so custom fork tags (e.g. 1.0.0, 1.0.1) work independently of pubspec.yaml.
+    final trimmedInstalled = installedTag.trim();
+    if (trimmedInstalled.isNotEmpty) {
+      if (trimmedTag == trimmedInstalled) return false;
+      if (isNewerVersion(trimmedTag, trimmedInstalled)) return true;
+      if (isNewerVersion(trimmedInstalled, trimmedTag)) return false;
+      return true;
     }
 
     if (isNewerVersion(trimmedTag, currentVersion)) {

@@ -469,6 +469,20 @@ void main() {
     );
     expect(
       AppUpdateService.evaluateHasUpdate(
+        latestTag: '1.0.1',
+        installedTag: '1.0.0',
+      ),
+      isTrue,
+    );
+    expect(
+      AppUpdateService.evaluateHasUpdate(
+        latestTag: '1.0.1',
+        installedTag: '1.0.2',
+      ),
+      isFalse,
+    );
+    expect(
+      AppUpdateService.evaluateHasUpdate(
         latestTag: 'custom-2026-11-15',
         installedTag: '',
         installedBuildDateIso: '2026-11-14T12:00:00Z',
