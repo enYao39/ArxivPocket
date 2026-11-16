@@ -324,7 +324,6 @@ class _AIChatPageState extends State<AIChatPage> {
 
     Box apiBox = await Hive.openBox("apibox");
     await apiBox.put("geminiModel", modelName);
-    await Hive.close();
 
     if (_hasConfiguredProvider) {
       model = await Gemini.newModel(
@@ -349,7 +348,6 @@ class _AIChatPageState extends State<AIChatPage> {
     baseUrl = await apiBox.get("baseUrl") ?? Gemini.defaultOpenAiBaseUrl;
     customModel = await apiBox.get("customModel") ?? "";
     final savedModelName = await apiBox.get("geminiModel");
-    await Hive.close();
 
     if (_hasConfiguredProvider) {
       if (mounted) {
@@ -399,7 +397,7 @@ class _AIChatPageState extends State<AIChatPage> {
   void getToggleTools() async {
     Box toolsBox = await Hive.openBox("toolsBox");
     toolsOn = await toolsBox.get("toolsBox") ?? true;
-    await Hive.close();
+    if (!mounted) return;
     setState(() {});
   }
 

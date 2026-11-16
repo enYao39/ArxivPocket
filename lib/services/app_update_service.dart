@@ -65,7 +65,7 @@ class AppUpdateService {
       );
       final data = response.data;
       if (data == null) {
-        return _checkViaWebReleases();
+        return await _checkViaWebReleases();
       }
 
       final tagName = (data["tag_name"] ?? "").toString().trim();

@@ -3,9 +3,9 @@ import 'package:arxiv/components/each_paper_card.dart';
 import 'package:arxiv/components/loading_indicator.dart';
 import 'package:arxiv/models/paper.dart';
 import 'package:arxiv/pages/paper_detail_page.dart';
+import 'package:arxiv/services/bookmarks_store.dart';
 import 'package:arxiv/services/collection_store.dart';
 import 'package:flutter/material.dart';
-import 'package:hive/hive.dart';
 import 'package:liquid_pull_to_refresh/liquid_pull_to_refresh.dart';
 
 class BookmarksPage extends StatefulWidget {
@@ -35,12 +35,7 @@ class _BookmarksPageState extends State<BookmarksPage> {
   int notesRefreshToken = 0;
 
   Future<void> getBookmarks() async {
-    final Box bookmarksBox = await Hive.openBox("bookmarks");
-    final raw = await bookmarksBox.get("bookmarks") ?? [];
-    await Hive.close();
-
-    final loadedPapers =
-        raw is List ? raw.whereType<Paper>().toList() : <Paper>[];
+    final loadedPapers = await BookmarksStore().loadBookmarks();
     final loadedFolders = await _collectionStore.loadFolders();
     final loadedMap = await _collectionStore.loadPaperFolderMap();
 
@@ -61,9 +56,7 @@ class _BookmarksPageState extends State<BookmarksPage> {
     setState(() {
       isLoading = true;
     });
-    final Box bookmarksBox = await Hive.openBox("bookmarks");
-    await bookmarksBox.clear();
-    await Hive.close();
+    await BookmarksStore().clearAll();
     for (final paper in bookmarks) {
       await _collectionStore.removePaperFromAllFolders(paper.id);
     }

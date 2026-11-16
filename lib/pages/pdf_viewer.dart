@@ -54,6 +54,12 @@ class _PDFViewerState extends State<PDFViewer> {
     _preparePdf();
   }
 
+  @override
+  void dispose() {
+    _dio.close(force: true);
+    super.dispose();
+  }
+
   Future<bool> _isValidPdfFile(File file) async {
     if (!await file.exists()) return false;
     final length = await file.length();

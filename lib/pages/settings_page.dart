@@ -1,7 +1,10 @@
 import "package:arxiv/pages/how_to_use.dart";
+import "package:arxiv/pages/read_history_page.dart";
 import "package:arxiv/services/app_update_service.dart";
+import "package:arxiv/services/feed_cache_store.dart";
 import "package:arxiv/services/main_page_style_store.dart";
 import "package:arxiv/services/pdf_cache_store.dart";
+import "package:arxiv/services/read_papers_store.dart";
 import "package:arxiv/theme/app_theme.dart";
 import "package:dio/dio.dart";
 import "package:flutter/material.dart";
@@ -24,15 +27,23 @@ class _SettingsPageState extends State<SettingsPage> {
   int _pdfCacheLimitMb = PdfCacheStore.defaultMaxCacheMb;
   int _cachedPdfCount = 0;
   int _cachedPdfBytes = 0;
+  int _readFlagCount = 0;
+  int _readFlagBytes = 0;
+  int _feedCacheBytes = 0;
 
   Future<void> _loadCacheInfo() async {
     final limitMb = await _pdfCacheStore.loadMaxCacheMb();
     final stats = await _pdfCacheStore.getCacheStats();
+    final readStats = await ReadPapersStore().getStorageStats();
+    final feedStats = await FeedCacheStore().getStorageStats();
     if (!mounted) return;
     setState(() {
       _pdfCacheLimitMb = limitMb;
       _cachedPdfCount = stats.fileCount;
       _cachedPdfBytes = stats.totalBytes;
+      _readFlagCount = readStats.count;
+      _readFlagBytes = readStats.bytes;
+      _feedCacheBytes = feedStats.bytes;
     });
   }
 
@@ -272,6 +283,21 @@ class _SettingsPageState extends State<SettingsPage> {
                 "$_cachedPdfCount files • ${PdfCacheStore.formatBytes(_cachedPdfBytes)}",
             onTap: _cachedPdfCount > 0 ? _clearPdfCache : () {},
           ),
+          _SettingsActionTile(
+            icon: Icons.history_outlined,
+            title: "Read History & Feed Cache",
+            subtitle:
+                "$_readFlagCount read papers • ${PdfCacheStore.formatBytes(_readFlagBytes + _feedCacheBytes)} total",
+            onTap: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ReadHistoryPage(),
+                ),
+              );
+              _loadCacheInfo();
+            },
+          ),
           const SizedBox(height: 18.0),
           _SettingsSectionLabel(
             label: "Help",
@@ -295,6 +321,86 @@ class _SettingsPageState extends State<SettingsPage> {
                 ? "Checking for updates..."
                 : "Current: ${AppUpdateService.displayInstalledVersion}",
             onTap: _checkForUpdates,
+          ),
+          _SettingsActionTile(
+            icon: Icons.info_outline,
+            title: "About",
+            subtitle: "arXiv attribution, source code & credits",
+            onTap: () {
+              showDialog(
+                context: context,
+                builder: (dialogContext) {
+                  final dialogColors = Theme.of(dialogContext).colorScheme;
+                  return AlertDialog(
+                    title: const Text("About ArxivPocket"),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          "Thank you to arXiv for use of its open access interoperability.",
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: dialogColors.onSurfaceVariant,
+                            fontSize: 13.0,
+                          ),
+                        ),
+                        const SizedBox(height: 16.0),
+                        GestureDetector(
+                          onTap: () {
+                            launchUrl(
+                              Uri.parse(
+                                "https://github.com/enYao39/ArxivPocket",
+                              ),
+                            );
+                          },
+                          child: Text(
+                            "View Source Code on GitHub",
+                            style: TextStyle(
+                              color: dialogColors.primary,
+                              fontSize: 13.0,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10.0),
+                        Wrap(
+                          alignment: WrapAlignment.center,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Text(
+                              "Made with 🤍 by ",
+                              style: TextStyle(
+                                color: dialogColors.onSurfaceVariant,
+                                fontSize: 13.0,
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: () {
+                                launchUrl(Uri.parse("https://ScholarXIV.com"));
+                              },
+                              child: Text(
+                                "ScholarXIV",
+                                style: TextStyle(
+                                  color: dialogColors.primary,
+                                  fontSize: 13.0,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        child: const Text("Close"),
+                      ),
+                    ],
+                  );
+                },
+              );
+            },
           ),
         ],
       ),
@@ -423,6 +529,17 @@ class _MainPageStyleSettingsPageState extends State<MainPageStyleSettingsPage> {
                   value: settings.restoreSearchFilter,
                   onChanged: (value) {
                     _store.save(settings.copyWith(restoreSearchFilter: value));
+                  },
+                ),
+                const SizedBox(height: 10.0),
+                _SettingsSwitchTile(
+                  icon: Icons.vertical_align_center,
+                  title: "Stay at last open position",
+                  subtitle:
+                      "Restore loaded pages and scroll position on launch instead of starting fresh at the newest entries.",
+                  value: settings.restoreFeedPosition,
+                  onChanged: (value) {
+                    _store.save(settings.copyWith(restoreFeedPosition: value));
                   },
                 ),
               ],

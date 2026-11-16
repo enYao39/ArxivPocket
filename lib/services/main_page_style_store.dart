@@ -10,6 +10,7 @@ class MainPageStyleSettings {
     this.maxAuthors = defaultMaxAuthors,
     this.restoreLastSession = true,
     this.restoreSearchFilter = false,
+    this.restoreFeedPosition = false,
     this.excludeCrossListed = false,
   });
 
@@ -19,6 +20,7 @@ class MainPageStyleSettings {
   final int maxAuthors;
   final bool restoreLastSession;
   final bool restoreSearchFilter;
+  final bool restoreFeedPosition;
   final bool excludeCrossListed;
 
   MainPageStyleSettings copyWith({
@@ -26,6 +28,7 @@ class MainPageStyleSettings {
     int? maxAuthors,
     bool? restoreLastSession,
     bool? restoreSearchFilter,
+    bool? restoreFeedPosition,
     bool? excludeCrossListed,
   }) {
     return MainPageStyleSettings(
@@ -33,6 +36,7 @@ class MainPageStyleSettings {
       maxAuthors: maxAuthors ?? this.maxAuthors,
       restoreLastSession: restoreLastSession ?? this.restoreLastSession,
       restoreSearchFilter: restoreSearchFilter ?? this.restoreSearchFilter,
+      restoreFeedPosition: restoreFeedPosition ?? this.restoreFeedPosition,
       excludeCrossListed: excludeCrossListed ?? this.excludeCrossListed,
     );
   }
@@ -45,6 +49,8 @@ class LastFeedState {
     this.sortOption = ArxivSortOption.newest,
     this.startPagination = 0,
     this.pageSize = 30,
+    this.visibleCount = 30,
+    this.scrollOffset = 0.0,
   });
 
   final String query;
@@ -52,6 +58,8 @@ class LastFeedState {
   final ArxivSortOption sortOption;
   final int startPagination;
   final int pageSize;
+  final int visibleCount;
+  final double scrollOffset;
 }
 
 class MainPageStyleStore {
@@ -60,12 +68,15 @@ class MainPageStyleStore {
   static const maxAuthorsKey = "maxAuthors";
   static const restoreLastSessionKey = "restoreLastSession";
   static const restoreSearchFilterKey = "restoreSearchFilter";
+  static const restoreFeedPositionKey = "restoreFeedPosition";
   static const excludeCrossListedKey = "excludeCrossListed";
   static const lastQueryKey = "lastQuery";
   static const lastCategoryCodeKey = "lastCategoryCode";
   static const lastSortOptionKey = "lastSortOption";
   static const lastStartPaginationKey = "lastStartPagination";
   static const lastPageSizeKey = "lastPageSize";
+  static const lastVisibleCountKey = "lastVisibleCount";
+  static const lastScrollOffsetKey = "lastScrollOffset";
 
   static final ValueNotifier<MainPageStyleSettings> notifier =
       ValueNotifier<MainPageStyleSettings>(const MainPageStyleSettings());
@@ -78,6 +89,7 @@ class MainPageStyleStore {
     final storedMax = box.get(maxAuthorsKey);
     final storedRestore = box.get(restoreLastSessionKey);
     final storedRestoreSearch = box.get(restoreSearchFilterKey);
+    final storedRestoreFeedPos = box.get(restoreFeedPositionKey);
     final storedExcludeCross = box.get(excludeCrossListedKey);
     await box.close();
 
@@ -89,6 +101,8 @@ class MainPageStyleStore {
       restoreLastSession: storedRestore is bool ? storedRestore : true,
       restoreSearchFilter:
           storedRestoreSearch is bool ? storedRestoreSearch : false,
+      restoreFeedPosition:
+          storedRestoreFeedPos is bool ? storedRestoreFeedPos : false,
       excludeCrossListed:
           storedExcludeCross is bool ? storedExcludeCross : false,
     );
@@ -110,6 +124,7 @@ class MainPageStyleStore {
     await box.put(maxAuthorsKey, settings.maxAuthors);
     await box.put(restoreLastSessionKey, settings.restoreLastSession);
     await box.put(restoreSearchFilterKey, settings.restoreSearchFilter);
+    await box.put(restoreFeedPositionKey, settings.restoreFeedPosition);
     await box.put(excludeCrossListedKey, settings.excludeCrossListed);
     await box.close();
   }
@@ -121,6 +136,8 @@ class MainPageStyleStore {
     final sortName = box.get(lastSortOptionKey)?.toString();
     final startPagination = box.get(lastStartPaginationKey);
     final pageSize = box.get(lastPageSizeKey);
+    final visibleCount = box.get(lastVisibleCountKey);
+    final scrollOffset = box.get(lastScrollOffsetKey);
     await box.close();
 
     final sortOption = ArxivSortOption.values.firstWhere(
@@ -128,6 +145,7 @@ class MainPageStyleStore {
       orElse: () => ArxivSortOption.newest,
     );
 
+    final resolvedPageSize = pageSize is int && pageSize > 0 ? pageSize : 30;
     return LastFeedState(
       query: query,
       categoryCode: categoryCode != null && categoryCode.isNotEmpty
@@ -137,7 +155,13 @@ class MainPageStyleStore {
       startPagination: startPagination is int && startPagination >= 0
           ? startPagination
           : 0,
-      pageSize: pageSize is int && pageSize > 0 ? pageSize : 30,
+      pageSize: resolvedPageSize,
+      visibleCount: visibleCount is int && visibleCount > 0
+          ? visibleCount
+          : resolvedPageSize,
+      scrollOffset: scrollOffset is num && scrollOffset >= 0
+          ? scrollOffset.toDouble()
+          : 0.0,
     );
   }
 
@@ -148,6 +172,8 @@ class MainPageStyleStore {
     await box.put(lastSortOptionKey, state.sortOption.name);
     await box.put(lastStartPaginationKey, state.startPagination);
     await box.put(lastPageSizeKey, state.pageSize);
+    await box.put(lastVisibleCountKey, state.visibleCount);
+    await box.put(lastScrollOffsetKey, state.scrollOffset);
     await box.close();
   }
 

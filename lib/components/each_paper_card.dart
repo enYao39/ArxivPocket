@@ -6,12 +6,13 @@ import 'package:arxiv/components/id_and_date.dart';
 import 'package:arxiv/components/summary_bottom_sheet.dart';
 import 'package:arxiv/models/paper.dart';
 import 'package:arxiv/pages/ai_chat_page.dart';
+import 'package:arxiv/services/bookmarks_store.dart';
 import 'package:arxiv/services/collection_store.dart';
 import 'package:arxiv/services/main_page_style_store.dart';
 import 'package:arxiv/services/paper_notes_store.dart';
+import 'package:arxiv/services/read_papers_store.dart';
 import 'package:arxiv/theme/app_theme.dart';
 import 'package:flutter/material.dart';
-import 'package:hive/hive.dart';
 import 'package:ionicons_plus/ionicons_plus.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -26,6 +27,8 @@ class EachPaperCard extends StatefulWidget {
     this.onCategoryTap,
     this.onCollectionChanged,
     this.notesRefreshToken = 0,
+    this.isNew = false,
+    this.dimWhenRead = true,
   });
 
   final Paper eachPaper;
@@ -36,6 +39,8 @@ class EachPaperCard extends StatefulWidget {
   final ValueChanged<String>? onCategoryTap;
   final VoidCallback? onCollectionChanged;
   final int notesRefreshToken;
+  final bool isNew;
+  final bool dimWhenRead;
 
   @override
   State<EachPaperCard> createState() => _EachPaperCardState();
@@ -147,24 +152,11 @@ class _EachPaperCardState extends State<EachPaperCard> {
   bool isBookmarked = false;
 
   Future<void> _ensureBookmarked() async {
-    Box bookmarksBox = await Hive.openBox("bookmarks");
-    List bookmarks = await bookmarksBox.get("bookmarks") ?? [];
-    final exists = bookmarks.any((b) => b.id == widget.eachPaper.id);
-    if (!exists) {
-      bookmarks.add(widget.eachPaper);
-      await bookmarksBox.put("bookmarks", bookmarks);
-    }
-    await Hive.close();
+    await BookmarksStore().ensureBookmarked(widget.eachPaper);
   }
 
   Future<void> _removeBookmark() async {
-    Box bookmarksBox = await Hive.openBox("bookmarks");
-    List bookmarks = await bookmarksBox.get("bookmarks") ?? [];
-    final newBookmarks = bookmarks
-        .where((b) => b.id != widget.eachPaper.id)
-        .toList();
-    await bookmarksBox.put("bookmarks", newBookmarks);
-    await Hive.close();
+    await BookmarksStore().removeBookmark(widget.eachPaper.id);
     await CollectionStore().removePaperFromAllFolders(widget.eachPaper.id);
   }
 
@@ -320,14 +312,11 @@ class _EachPaperCardState extends State<EachPaperCard> {
   }
 
   Future<void> checkIfBookmarked() async {
-    Box bookmarksBox = await Hive.openBox("bookmarks");
-    List bookmarks = await bookmarksBox.get("bookmarks") ?? [];
-    await Hive.close();
-
-    isBookmarked = bookmarks
-        .where((bookmark) => bookmark.id == widget.eachPaper.id)
-        .isNotEmpty;
-    setState(() {});
+    await BookmarksStore().ensureLoaded();
+    if (!mounted) return;
+    setState(() {
+      isBookmarked = BookmarksStore().isBookmarked(widget.eachPaper.id);
+    });
   }
 
   Future<void> checkIfHasNote() async {
@@ -361,35 +350,49 @@ class _EachPaperCardState extends State<EachPaperCard> {
     final colorScheme = Theme.of(context).colorScheme;
     final cardColor = subtleSurfaceColor(colorScheme);
 
-    final card = Stack(
-      children: [
-        Container(
-          margin: const EdgeInsets.only(
-            left: 8.0,
-            right: 8.0,
-            bottom: 6.0,
-            top: 6.0,
-          ),
-          padding: const EdgeInsets.only(
-            left: 10.0,
-            right: 10.0,
-            top: 6.0,
-            bottom: 6.0,
-          ),
-          decoration: BoxDecoration(
-            color: cardColor,
-            borderRadius: BorderRadius.circular(10.0),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ID and Published Date
-              IDAndDate(
-                id: widget.eachPaper.id,
-                date: widget.eachPaper.publishedAt,
-                primaryCategory: primaryCategory(),
-                onCategoryTap: widget.onCategoryTap,
+    final normalizedId = ReadPapersStore.normalizeId(widget.eachPaper.id);
+
+    Widget buildCard(bool isRead) {
+      final card = AnimatedOpacity(
+        opacity: widget.dimWhenRead && isRead ? 0.56 : 1.0,
+        duration: const Duration(milliseconds: 180),
+        child: Stack(
+          children: [
+            Container(
+              margin: const EdgeInsets.only(
+                left: 8.0,
+                right: 8.0,
+                bottom: 6.0,
+                top: 6.0,
               ),
+              padding: const EdgeInsets.only(
+                left: 10.0,
+                right: 10.0,
+                top: 6.0,
+                bottom: 6.0,
+              ),
+              decoration: BoxDecoration(
+                color: cardColor,
+                borderRadius: BorderRadius.circular(10.0),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // ID, Category, NEW badge, and Read toggle
+                  IDAndDate(
+                    id: widget.eachPaper.id,
+                    date: widget.eachPaper.publishedAt,
+                    primaryCategory: primaryCategory(),
+                    onCategoryTap: widget.onCategoryTap,
+                    isNew: widget.isNew,
+                    isRead: isRead,
+                    onToggleRead: () {
+                      ReadPapersStore().toggleRead(
+                        widget.eachPaper.id,
+                        paper: widget.eachPaper,
+                      );
+                    },
+                  ),
 
               // TITLE
               GestureDetector(
@@ -526,28 +529,38 @@ class _EachPaperCardState extends State<EachPaperCard> {
         ),
         if (hasNote)
           Positioned(
-            top: 13.0,
-            right: 16.0,
+            top: 10.0,
+            right: 11.0,
             child: Container(
-              width: 9.0,
-              height: 9.0,
+              width: 7.0,
+              height: 7.0,
               decoration: BoxDecoration(
                 color: colorScheme.primary,
                 shape: BoxShape.circle,
               ),
             ),
           ),
-      ],
-    );
+          ],
+        ),
+      );
 
-    if (widget.onCardTap == null) {
-      return card;
+      if (widget.onCardTap == null) {
+        return card;
+      }
+
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onCardTap,
+        child: card,
+      );
     }
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: widget.onCardTap,
-      child: card,
+    return ValueListenableBuilder<Set<String>>(
+      valueListenable: ReadPapersStore.notifier,
+      builder: (context, readIds, _) {
+        final isRead = readIds.contains(normalizedId);
+        return buildCard(isRead);
+      },
     );
   }
 }

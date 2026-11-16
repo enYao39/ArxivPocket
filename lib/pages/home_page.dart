@@ -1,4 +1,6 @@
 // ignore_for_file: file_names
+import 'dart:math' as math;
+
 import 'package:arxiv/apis/arxiv.dart';
 import 'package:arxiv/components/advanced_search_sheet.dart';
 import 'package:arxiv/components/each_paper_card.dart';
@@ -7,8 +9,11 @@ import 'package:arxiv/components/search_box.dart';
 import 'package:arxiv/data/arxiv_categories.dart';
 import 'package:arxiv/services/arxiv_category_parser.dart';
 import 'package:arxiv/services/arxiv_update_schedule.dart';
+import 'package:arxiv/services/bookmarks_store.dart';
+import 'package:arxiv/services/feed_cache_store.dart';
 import 'package:arxiv/services/main_page_style_store.dart';
 import 'package:arxiv/services/pdf_cache_store.dart';
+import 'package:arxiv/services/read_papers_store.dart';
 import 'package:arxiv/models/paper.dart';
 import 'package:arxiv/pages/ai_chat_page.dart';
 import 'package:arxiv/pages/bookmarks_page.dart';
@@ -16,11 +21,9 @@ import 'package:arxiv/pages/paper_detail_page.dart';
 import 'package:arxiv/pages/paper_notes_page.dart';
 import 'package:arxiv/pages/pdf_viewer.dart';
 import 'package:arxiv/pages/settings_page.dart';
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:ionicons_plus/ionicons_plus.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -42,14 +45,23 @@ class _HomePageState extends State<HomePage> {
   String _lastAdvancedSummary = "";
 
   var isHomeScreenLoading = true;
+  bool _isLoadingMore = false;
   DateTime? _lastFetchedAtUtc;
   bool _dismissedNoUpdateBanner = false;
   TextEditingController searchTermController = TextEditingController();
   final ScrollController _feedScrollController = ScrollController();
   int notesRefreshToken = 0;
 
-  var dio = Dio();
   List<Paper> data = [];
+  List<Paper> _cachedFeedPapers = [];
+  int _nextFetchOffset = 0;
+  final ValueNotifier<double> _pullUpOverscrollNotifier = ValueNotifier<double>(
+    0.0,
+  );
+  bool _pullUpHapticFired = false;
+  static const double _pullUpTriggerDistance = 88.0;
+  int? _pendingRestoreVisibleCount;
+  double? _pendingRestoreScrollOffset;
   ArxivSearchResult? lastSearchResult;
   String? homeScreenError;
   int _searchRequestSerial = 0;
@@ -58,6 +70,28 @@ class _HomePageState extends State<HomePage> {
       selectedCategory != null ||
       _activeAdvancedQuery != null ||
       searchTermController.text.trim().isNotEmpty;
+
+  bool get _isCacheableBrowseFeed =>
+      selectedCategory != null &&
+      _activeAdvancedQuery == null &&
+      searchTermController.text.trim().isEmpty;
+
+  bool get _canLoadMore {
+    if (isHomeScreenLoading || homeScreenError != null || data.isEmpty) {
+      return false;
+    }
+    if (!_hasActiveSearchOrFilter) {
+      return false;
+    }
+    if (_isCacheableBrowseFeed && data.length < _cachedFeedPapers.length) {
+      return true;
+    }
+    final total = lastSearchResult?.totalResults ?? 0;
+    if (total > 0) {
+      return _nextFetchOffset < total;
+    }
+    return data.length >= maxContent;
+  }
 
   void _scrollToTop() {
     if (!_feedScrollController.hasClients) return;
@@ -68,58 +102,68 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Future<void> search({bool? resetPagination}) async {
-    final requestSerial = ++_searchRequestSerial;
-    if (resetPagination == true) {
-      startPagination = 0;
-    }
-    setState(() {
-      isHomeScreenLoading = true;
-      homeScreenError = null;
-      data = [];
-    });
+  int get _effectivePageSize => _isCacheableBrowseFeed
+      ? ArxivWebSearch.normalizeWebPageSize(maxContent)
+      : maxContent;
 
-    final rawSearchInput = searchTermController.text.trim();
-    if (_activeAdvancedQuery != null &&
-        rawSearchInput != _lastAdvancedSummary.trim()) {
-      _activeAdvancedQuery = null;
-      _lastAdvancedSummary = "";
-    }
+  void _saveCurrentFeedState({double? scrollOffset}) {
+    final offset = scrollOffset ??
+        (_feedScrollController.hasClients
+            ? _feedScrollController.offset
+            : 0.0);
     MainPageStyleStore().saveLastFeedState(
       LastFeedState(
-        query: rawSearchInput,
+        query: searchTermController.text.trim(),
         categoryCode: selectedCategory?.code,
         sortOption: sortOption,
         startPagination: startPagination,
         pageSize: maxContent,
+        visibleCount: data.isNotEmpty ? data.length : maxContent,
+        scrollOffset: offset,
       ),
     );
+  }
 
+  void _restoreScrollIfNeeded() {
+    final target = _pendingRestoreScrollOffset;
+    _pendingRestoreScrollOffset = null;
+    if (target == null || target <= 0) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_feedScrollController.hasClients) return;
+      final maxExtent = _feedScrollController.position.maxScrollExtent;
+      _feedScrollController.jumpTo(math.min(target, maxExtent));
+    });
+  }
+
+  Future<ArxivSearchResult> _fetchFeedPage(int pageOffset) async {
+    final rawSearchInput = searchTermController.text.trim();
     final excludeCrossListed =
         MainPageStyleStore.notifier.value.excludeCrossListed;
     final filterPrimary = excludeCrossListed ? selectedCategory?.code : null;
 
-    late final ArxivSearchResult result;
     if (_activeAdvancedQuery != null) {
-      result = await Arxiv.advancedSearchWithMetadata(
+      return Arxiv.advancedSearchWithMetadata(
         _activeAdvancedQuery!,
-        page: startPagination,
+        page: pageOffset,
       );
-    } else if (selectedCategory != null && rawSearchInput.isEmpty) {
-      result = await Arxiv.advancedSearchWithMetadata(
+    }
+    if (selectedCategory != null && rawSearchInput.isEmpty) {
+      return Arxiv.advancedSearchWithMetadata(
         ArxivAdvancedQuery(
           category: selectedCategory,
           includeCrossList: !excludeCrossListed,
           sortOption: sortOption,
           pageSize: ArxivWebSearch.normalizeWebPageSize(maxContent),
         ),
-        page: startPagination,
+        page: pageOffset,
         filterPrimaryCategory: filterPrimary,
       );
-    } else if (rawSearchInput.isNotEmpty) {
+    }
+    if (rawSearchInput.isNotEmpty) {
       if (selectedCategory != null &&
           Arxiv.extractArxivId(rawSearchInput) == null) {
-        result = await Arxiv.advancedSearchWithMetadata(
+        return Arxiv.advancedSearchWithMetadata(
           ArxivAdvancedQuery(
             terms: [ArxivSearchTermRow(term: rawSearchInput)],
             category: selectedCategory,
@@ -127,20 +171,225 @@ class _HomePageState extends State<HomePage> {
             sortOption: sortOption,
             pageSize: ArxivWebSearch.normalizeWebPageSize(maxContent),
           ),
-          page: startPagination,
-          filterPrimaryCategory: filterPrimary,
-        );
-      } else {
-        result = await Arxiv.searchWithMetadata(
-          rawSearchInput,
-          page: startPagination,
-          pageSize: maxContent,
-          sortOption: sortOption,
+          page: pageOffset,
           filterPrimaryCategory: filterPrimary,
         );
       }
-    } else {
-      result = await suggestedPapers();
+      return Arxiv.searchWithMetadata(
+        rawSearchInput,
+        page: pageOffset,
+        pageSize: maxContent,
+        sortOption: sortOption,
+        filterPrimaryCategory: filterPrimary,
+      );
+    }
+    return suggestedPapers();
+  }
+
+  Future<void> search({
+    bool? resetPagination,
+    bool forceNetwork = false,
+  }) async {
+    final requestSerial = ++_searchRequestSerial;
+    if (resetPagination == true) {
+      startPagination = 0;
+    }
+
+    final rawSearchInput = searchTermController.text.trim();
+    if (_activeAdvancedQuery != null &&
+        rawSearchInput != _lastAdvancedSummary.trim()) {
+      _activeAdvancedQuery = null;
+      _lastAdvancedSummary = "";
+    }
+
+    final excludeCrossListed =
+        MainPageStyleStore.notifier.value.excludeCrossListed;
+    final isCacheable = _isCacheableBrowseFeed && startPagination == 0;
+    final cacheKey = isCacheable
+        ? FeedCacheStore.buildKey(
+            categoryCode: selectedCategory?.code,
+            sortOption: sortOption,
+            excludeCrossListed: excludeCrossListed,
+          )
+        : null;
+
+    if (isCacheable && !forceNetwork && cacheKey != null) {
+      final cached = await FeedCacheStore().load(cacheKey);
+      if (!mounted || requestSerial != _searchRequestSerial) return;
+
+      if (cached != null && cached.papers.isNotEmpty) {
+        final desiredCount = _pendingRestoreVisibleCount ?? maxContent;
+        _pendingRestoreVisibleCount = null;
+        final visibleCount = math.min(
+          math.max(desiredCount, 1),
+          cached.papers.length,
+        );
+
+        setState(() {
+          _cachedFeedPapers = cached.papers;
+          data = cached.papers.take(visibleCount).toList();
+          _nextFetchOffset = _effectivePageSize;
+          lastSearchResult = ArxivSearchResult(
+            papers: data,
+            feed: {"opensearch:totalResults": cached.totalResults},
+            rawResponse: const {},
+            rawXml: "",
+          );
+          homeScreenError = null;
+          isHomeScreenLoading = false;
+          _lastFetchedAtUtc = cached.cachedAtUtc;
+        });
+        _saveCurrentFeedState();
+        _restoreScrollIfNeeded();
+
+        if (!ArxivUpdateSchedule.hasNewAnnouncementSince(cached.cachedAtUtc)) {
+          return;
+        }
+
+        // New arXiv announcement available: fetch fresh page 0 and merge.
+        final freshResult = await _fetchFeedPage(0);
+        if (!mounted || requestSerial != _searchRequestSerial) return;
+        if (freshResult.errorMessage == null && freshResult.papers.isNotEmpty) {
+          final nowUtc = DateTime.now().toUtc();
+          final merged = await FeedCacheStore().mergeFreshPage(
+            cacheKey,
+            freshPapers: freshResult.papers,
+            totalResults: freshResult.totalResults,
+            fetchedAtUtc: nowUtc,
+          );
+          if (!mounted || requestSerial != _searchRequestSerial) return;
+          final nextVisible = math.min(
+            math.max(data.length, maxContent),
+            merged.papers.length,
+          );
+          setState(() {
+            _cachedFeedPapers = merged.papers;
+            data = merged.papers.take(nextVisible).toList();
+            lastSearchResult = freshResult;
+            _lastFetchedAtUtc = nowUtc;
+          });
+          _saveCurrentFeedState();
+        }
+        return;
+      }
+    }
+
+    setState(() {
+      isHomeScreenLoading = true;
+      homeScreenError = null;
+      data = [];
+      _cachedFeedPapers = [];
+      _isLoadingMore = false;
+    });
+
+    _saveCurrentFeedState(scrollOffset: 0.0);
+
+    final result = await _fetchFeedPage(startPagination);
+    if (!mounted || requestSerial != _searchRequestSerial) {
+      return;
+    }
+
+    if (isCacheable && cacheKey != null && result.errorMessage == null) {
+      final nowUtc = DateTime.now().toUtc();
+      final merged = await FeedCacheStore().mergeFreshPage(
+        cacheKey,
+        freshPapers: result.papers,
+        totalResults: result.totalResults,
+        fetchedAtUtc: nowUtc,
+      );
+      if (!mounted || requestSerial != _searchRequestSerial) return;
+
+      final desiredCount = _pendingRestoreVisibleCount ?? maxContent;
+      _pendingRestoreVisibleCount = null;
+      final visibleCount = math.min(
+        math.max(desiredCount, 1),
+        merged.papers.length,
+      );
+      setState(() {
+        _cachedFeedPapers = merged.papers;
+        lastSearchResult = result;
+        data = merged.papers.take(visibleCount).toList();
+        _nextFetchOffset = startPagination + _effectivePageSize;
+        homeScreenError = null;
+        isHomeScreenLoading = false;
+        _lastFetchedAtUtc = nowUtc;
+      });
+      _saveCurrentFeedState();
+      _restoreScrollIfNeeded();
+      return;
+    }
+
+    _pendingRestoreVisibleCount = null;
+    _pendingRestoreScrollOffset = null;
+    setState(() {
+      lastSearchResult = result;
+      data = result.papers;
+      _nextFetchOffset = startPagination + _effectivePageSize;
+      homeScreenError = result.errorMessage;
+      isHomeScreenLoading = false;
+      _lastFetchedAtUtc =
+          result.errorMessage == null ? DateTime.now().toUtc() : null;
+    });
+  }
+
+  Future<void> _loadNextPage() async {
+    if (_isLoadingMore || !_canLoadMore) return;
+
+    // 1. Cache-first: reveal more cached entries before hitting the network.
+    if (_isCacheableBrowseFeed && data.length < _cachedFeedPapers.length) {
+      final nextCount = math.min(
+        data.length + maxContent,
+        _cachedFeedPapers.length,
+      );
+      setState(() {
+        data = _cachedFeedPapers.take(nextCount).toList();
+      });
+      _saveCurrentFeedState();
+      return;
+    }
+
+    // 2. No more cached entries: fetch next page from arXiv and append.
+    final requestSerial = _searchRequestSerial;
+    setState(() {
+      _isLoadingMore = true;
+    });
+
+    final offsetToFetch = _nextFetchOffset;
+    final result = await _fetchFeedPage(offsetToFetch);
+    if (!mounted || requestSerial != _searchRequestSerial) {
+      return;
+    }
+
+    if (result.errorMessage != null) {
+      setState(() {
+        _isLoadingMore = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.errorMessage!)),
+      );
+      return;
+    }
+
+    final existingIds = data
+        .map((p) => ReadPapersStore.normalizeId(p.id))
+        .toSet();
+    final newPapers = result.papers
+        .where((p) => existingIds.add(ReadPapersStore.normalizeId(p.id)))
+        .toList();
+
+    if (_isCacheableBrowseFeed && newPapers.isNotEmpty) {
+      final excludeCrossListed =
+          MainPageStyleStore.notifier.value.excludeCrossListed;
+      final cacheKey = FeedCacheStore.buildKey(
+        categoryCode: selectedCategory?.code,
+        sortOption: sortOption,
+        excludeCrossListed: excludeCrossListed,
+      );
+      await FeedCacheStore().appendPage(
+        cacheKey,
+        morePapers: newPapers,
+        totalResults: result.totalResults,
+      );
     }
 
     if (!mounted || requestSerial != _searchRequestSerial) {
@@ -148,13 +397,15 @@ class _HomePageState extends State<HomePage> {
     }
 
     setState(() {
+      _isLoadingMore = false;
+      _nextFetchOffset = offsetToFetch + _effectivePageSize;
       lastSearchResult = result;
-      data = result.papers;
-      homeScreenError = result.errorMessage;
-      isHomeScreenLoading = false;
-      _lastFetchedAtUtc =
-          result.errorMessage == null ? DateTime.now().toUtc() : null;
+      data = [...data, ...newPapers];
+      if (_isCacheableBrowseFeed) {
+        _cachedFeedPapers = [..._cachedFeedPapers, ...newPapers];
+      }
     });
+    _saveCurrentFeedState();
   }
 
   Future<void> _handlePullToRefresh() async {
@@ -172,7 +423,7 @@ class _HomePageState extends State<HomePage> {
         );
 
     if (shouldRefresh) {
-      await search();
+      await search(resetPagination: true, forceNetwork: true);
       return;
     }
 
@@ -421,6 +672,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _initializeAndLoadFeed() async {
+    await Future.wait([
+      ReadPapersStore().ensureLoaded(),
+      BookmarksStore().ensureLoaded(),
+    ]);
     final store = MainPageStyleStore();
     final settings = await store.load();
     if (!mounted) return;
@@ -439,6 +694,10 @@ class _HomePageState extends State<HomePage> {
             settings.restoreSearchFilter ? lastState.startPagination : 0;
         maxContent = lastState.pageSize;
         paginationGap = lastState.pageSize;
+        if (settings.restoreFeedPosition) {
+          _pendingRestoreVisibleCount = lastState.visibleCount;
+          _pendingRestoreScrollOffset = lastState.scrollOffset;
+        }
       });
     }
 
@@ -450,6 +709,7 @@ class _HomePageState extends State<HomePage> {
     searchTermController.removeListener(_onSearchTermChanged);
     searchTermController.dispose();
     _feedScrollController.dispose();
+    _pullUpOverscrollNotifier.dispose();
     super.dispose();
   }
 
@@ -521,63 +781,258 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildPaginationBar(ColorScheme colorScheme) {
-    final total = lastSearchResult?.totalResults ?? 0;
-    final canGoBack = startPagination >= paginationGap;
-    final canGoForward = total > 0
-        ? startPagination + data.length < total
-        : data.length >= maxContent;
+  String? _latestBatchDate() {
+    if (!_isCacheableBrowseFeed ||
+        sortOption != ArxivSortOption.newest ||
+        data.isEmpty) {
+      return null;
+    }
+    final firstDate = data.first.publishedAt.trim();
+    if (firstDate.isEmpty) return null;
+    final parsed = DateTime.tryParse(firstDate);
+    if (parsed == null) return null;
+    final age = DateTime.now().toUtc().difference(parsed);
+    if (age.inDays > 5) return null;
+    return firstDate;
+  }
 
-    final rangeStart = startPagination + 1;
-    final rangeEnd = startPagination + data.length;
-    final totalSuffix = total > 0 ? " of $total" : "";
+  Widget _buildNewTodayBanner(
+    ColorScheme colorScheme,
+    Set<String> readIds,
+    String latestDate,
+  ) {
+    final source = _isCacheableBrowseFeed && _cachedFeedPapers.isNotEmpty
+        ? _cachedFeedPapers
+        : data;
+    final batchPapers =
+        source.where((p) => p.publishedAt.trim() == latestDate).toList();
+    if (batchPapers.isEmpty) return const SizedBox.shrink();
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        IconButton(
-          onPressed: canGoBack
-              ? () {
-                  startPagination -= paginationGap;
-                  search();
-                  _scrollToTop();
-                }
-              : null,
-          icon: Icon(
-            Ionicons.arrow_back,
-            color: canGoBack
-                ? colorScheme.onSurfaceVariant
-                : colorScheme.onSurface.withAlpha(64),
-            size: 20.0,
+    final unreadCount = batchPapers
+        .where((p) => !readIds.contains(ReadPapersStore.normalizeId(p.id)))
+        .length;
+    final noAnnouncement =
+        ArxivUpdateSchedule.noAnnouncementReason(DateTime.now().toUtc()) !=
+            null;
+    final label = noAnnouncement
+        ? "Latest batch ($latestDate): ${batchPapers.length} papers · $unreadCount unread"
+        : "New today ($latestDate): ${batchPapers.length} new · $unreadCount unread";
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12.0, 0.0, 12.0, 6.0),
+      padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 6.0),
+      decoration: BoxDecoration(
+        color: colorScheme.primaryContainer.withAlpha(110),
+        borderRadius: BorderRadius.circular(10.0),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.auto_awesome_motion_outlined,
+            size: 16.0,
+            color: colorScheme.primary,
           ),
-        ),
-        Text(
-          "$rangeStart–$rangeEnd$totalSuffix",
-          style: TextStyle(color: colorScheme.onSurfaceVariant),
-        ),
-        IconButton(
-          onPressed: canGoForward
-              ? () {
-                  startPagination += paginationGap;
-                  search();
-                  _scrollToTop();
-                }
-              : null,
-          icon: Icon(
-            Ionicons.arrow_forward,
-            color: canGoForward
-                ? colorScheme.onSurfaceVariant
-                : colorScheme.onSurface.withAlpha(64),
-            size: 20.0,
+          const SizedBox(width: 8.0),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: colorScheme.onSurface,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
+  }
+
+  Widget _buildLastReadDivider(ColorScheme colorScheme, int unreadAbove) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 6.0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Divider(
+              color: colorScheme.primary.withAlpha(90),
+              thickness: 1.0,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10.0),
+            child: Text(
+              "Last read · $unreadAbove unread above",
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: colorScheme.primary,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Divider(
+              color: colorScheme.primary.withAlpha(90),
+              thickness: 1.0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  double _pullUpVisualLift(double overscroll) {
+    if (_isLoadingMore) return 64.0;
+    return (overscroll * 0.65).clamp(0.0, 92.0);
+  }
+
+  Widget _buildPullUpOverlay(ColorScheme colorScheme) {
+    return ValueListenableBuilder<double>(
+      valueListenable: _pullUpOverscrollNotifier,
+      builder: (context, overscroll, _) {
+        final lift = _pullUpVisualLift(overscroll);
+        if (lift <= 1.0) return const SizedBox.shrink();
+
+        final progress = (overscroll / _pullUpTriggerDistance).clamp(0.0, 1.0);
+        final ready = overscroll >= _pullUpTriggerDistance;
+
+        return Positioned(
+          left: 0.0,
+          right: 0.0,
+          bottom: 0.0,
+          height: lift,
+          child: IgnorePointer(
+            child: Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 22.0,
+                    height: 22.0,
+                    child: _isLoadingMore
+                        ? CircularProgressIndicator(
+                            strokeWidth: 2.4,
+                            color: colorScheme.primary,
+                          )
+                        : Transform.rotate(
+                            angle: progress * 2.0 * math.pi,
+                            child: CircularProgressIndicator(
+                              value: progress.clamp(0.08, 1.0),
+                              strokeWidth: 2.4,
+                              color: ready
+                                  ? colorScheme.primary
+                                  : colorScheme.onSurfaceVariant,
+                              backgroundColor:
+                                  colorScheme.surfaceContainerHighest,
+                            ),
+                          ),
+                  ),
+                  if (_isLoadingMore || ready) ...[
+                    const SizedBox(width: 10.0),
+                    Text(
+                      _isLoadingMore ? "Loading..." : "Release to load",
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w500,
+                        color: ready || _isLoadingMore
+                            ? colorScheme.primary
+                            : colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _updatePullUpOverscroll(double nextValue) {
+    final clamped = nextValue.clamp(0.0, 140.0);
+    if (clamped >= _pullUpTriggerDistance && !_pullUpHapticFired) {
+      _pullUpHapticFired = true;
+      HapticFeedback.selectionClick();
+    } else if (clamped < _pullUpTriggerDistance) {
+      _pullUpHapticFired = false;
+    }
+    if (clamped != _pullUpOverscrollNotifier.value) {
+      _pullUpOverscrollNotifier.value = clamped;
+    }
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (!_canLoadMore || _isLoadingMore || !_feedScrollController.hasClients) {
+      return;
+    }
+    final pos = _feedScrollController.position;
+    final atBottom = pos.pixels >= pos.maxScrollExtent - 2.0;
+
+    if (!atBottom && _pullUpOverscrollNotifier.value > 0.0) {
+      _updatePullUpOverscroll(0.0);
+      return;
+    }
+
+    // Dragging finger down (dy > 0) pulls back and cancels the load gesture.
+    if (event.delta.dy > 0 && _pullUpOverscrollNotifier.value > 0.0) {
+      _updatePullUpOverscroll(
+        _pullUpOverscrollNotifier.value - event.delta.dy * 1.4,
+      );
+    }
+  }
+
+  void _finishPullUpGesture() {
+    final shouldLoad =
+        _pullUpOverscrollNotifier.value >= _pullUpTriggerDistance &&
+        !_isLoadingMore &&
+        _canLoadMore;
+    if (_pullUpOverscrollNotifier.value != 0.0 || _pullUpHapticFired) {
+      _pullUpOverscrollNotifier.value = 0.0;
+      _pullUpHapticFired = false;
+    }
+    if (shouldLoad) {
+      _loadNextPage();
+    }
+  }
+
+  bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification is OverscrollNotification &&
+        notification.overscroll > 0 &&
+        notification.metrics.pixels >=
+            notification.metrics.maxScrollExtent - 2.0 &&
+        _canLoadMore &&
+        !_isLoadingMore) {
+      _updatePullUpOverscroll(
+        _pullUpOverscrollNotifier.value + notification.overscroll,
+      );
+    } else if (notification is ScrollUpdateNotification) {
+      if (notification.metrics.pixels > notification.metrics.maxScrollExtent &&
+          _canLoadMore &&
+          !_isLoadingMore) {
+        _updatePullUpOverscroll(
+          notification.metrics.pixels - notification.metrics.maxScrollExtent,
+        );
+      } else if ((notification.scrollDelta ?? 0) < 0 &&
+          _pullUpOverscrollNotifier.value > 0.0) {
+        _updatePullUpOverscroll(0.0);
+      }
+    } else if (notification is ScrollEndNotification) {
+      if (MainPageStyleStore.notifier.value.restoreFeedPosition &&
+          _feedScrollController.hasClients) {
+        _saveCurrentFeedState(scrollOffset: _feedScrollController.offset);
+      }
+      _finishPullUpGesture();
+    }
+    return false;
   }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final latestBatchDate = _latestBatchDate();
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("ArxivPocket"),
@@ -634,227 +1089,266 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(width: 10.0),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _handlePullToRefresh,
-        child: ListView(
-          controller: _feedScrollController,
-          children: [
-            SearchBox(
-              searchTermController: searchTermController,
-              searchFunction: search,
-              sortOption: sortOption,
-              onSortOptionChanged: changeSortOption,
-              onCategorySelected: searchCategory,
-              onClearCategory: clearCategoryFilter,
-              onOpenAdvancedSearch: _openAdvancedSearch,
-              selectedCategory: selectedCategory,
-            ),
-            if (selectedCategory != null || _activeAdvancedQuery != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12.0, 0.0, 12.0, 6.0),
-                child: Wrap(
-                  spacing: 8.0,
-                  runSpacing: 6.0,
-                  children: [
-                    if (selectedCategory != null)
-                      InputChip(
-                        label: Text(categoryFilterLabel(selectedCategory!)),
-                        selected: true,
-                        onDeleted: clearCategoryFilter,
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    if (_activeAdvancedQuery != null)
-                      InputChip(
-                        avatar: const Icon(Icons.tune_rounded, size: 16.0),
-                        label: const Text("Advanced search"),
-                        selected: true,
-                        onPressed: _openAdvancedSearch,
-                        onDeleted: _clearAdvancedSearch,
-                        visualDensity: VisualDensity.compact,
-                      ),
-                  ],
-                ),
-              ),
-
-            if (!_dismissedNoUpdateBanner)
-              Builder(
-                builder: (context) {
-                  final reason = ArxivUpdateSchedule.noAnnouncementReason(
-                    DateTime.now().toUtc(),
+      body: Stack(
+        children: [
+          Listener(
+            onPointerMove: _handlePointerMove,
+            onPointerUp: (_) => _finishPullUpGesture(),
+            onPointerCancel: (_) => _finishPullUpGesture(),
+            child: NotificationListener<ScrollNotification>(
+              onNotification: _handleScrollNotification,
+              child: ValueListenableBuilder<double>(
+                valueListenable: _pullUpOverscrollNotifier,
+                builder: (context, overscroll, child) {
+                  final lift = _pullUpVisualLift(overscroll);
+                  return Transform.translate(
+                    offset: Offset(0.0, -lift),
+                    child: child,
                   );
-                  if (reason == null) return const SizedBox.shrink();
-                  return Container(
-                    margin: const EdgeInsets.fromLTRB(12.0, 0.0, 12.0, 8.0),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12.0,
-                      vertical: 8.0,
-                    ),
-                    decoration: BoxDecoration(
-                      color: colorScheme.secondaryContainer,
-                      borderRadius: BorderRadius.circular(10.0),
-                    ),
-                    child: Row(
+                },
+                child: RefreshIndicator(
+                  onRefresh: _handlePullToRefresh,
+                  child: CustomScrollView(
+                controller: _feedScrollController,
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Icon(
-                          Icons.info_outline,
-                          size: 18.0,
-                          color: colorScheme.onSecondaryContainer,
+                        SearchBox(
+                          searchTermController: searchTermController,
+                          searchFunction: search,
+                          sortOption: sortOption,
+                          onSortOptionChanged: changeSortOption,
+                          onCategorySelected: searchCategory,
+                          onClearCategory: clearCategoryFilter,
+                          onOpenAdvancedSearch: _openAdvancedSearch,
+                          selectedCategory: selectedCategory,
                         ),
-                        const SizedBox(width: 8.0),
-                        Expanded(
-                          child: Text(
-                            reason,
-                            style: TextStyle(
-                              fontSize: 13.0,
-                              color: colorScheme.onSecondaryContainer,
+                        if (selectedCategory != null ||
+                            _activeAdvancedQuery != null)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(
+                              12.0,
+                              0.0,
+                              12.0,
+                              6.0,
+                            ),
+                            child: Row(
+                              children: [
+                                if (selectedCategory != null)
+                                  InputChip(
+                                    label: Text(
+                                      categoryFilterLabel(selectedCategory!),
+                                    ),
+                                    selected: true,
+                                    onDeleted: clearCategoryFilter,
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                if (selectedCategory != null &&
+                                    _activeAdvancedQuery != null)
+                                  const SizedBox(width: 8.0),
+                                if (_activeAdvancedQuery != null)
+                                  Flexible(
+                                    child: InputChip(
+                                      avatar: const Icon(
+                                        Icons.tune_rounded,
+                                        size: 16.0,
+                                      ),
+                                      label: const Text(
+                                        "Advanced search",
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      selected: true,
+                                      onPressed: _openAdvancedSearch,
+                                      onDeleted: _clearAdvancedSearch,
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
-                        ),
-                        IconButton(
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          icon: Icon(
-                            Icons.close,
-                            size: 18.0,
-                            color: colorScheme.onSecondaryContainer,
+                        if (!isHomeScreenLoading &&
+                            homeScreenError == null &&
+                            data.isNotEmpty &&
+                            latestBatchDate != null &&
+                            _hasActiveSearchOrFilter)
+                          ValueListenableBuilder<Set<String>>(
+                            valueListenable: ReadPapersStore.notifier,
+                            builder: (context, readIds, _) =>
+                                _buildNewTodayBanner(
+                                  colorScheme,
+                                  readIds,
+                                  latestBatchDate,
+                                ),
                           ),
-                          onPressed: () {
-                            setState(() => _dismissedNoUpdateBanner = true);
-                          },
-                        ),
+                        if (!_dismissedNoUpdateBanner)
+                          Builder(
+                            builder: (context) {
+                              final reason =
+                                  ArxivUpdateSchedule.noAnnouncementReason(
+                                    DateTime.now().toUtc(),
+                                  );
+                              if (reason == null) {
+                                return const SizedBox.shrink();
+                              }
+                              return Container(
+                                margin: const EdgeInsets.fromLTRB(
+                                  12.0,
+                                  0.0,
+                                  12.0,
+                                  8.0,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12.0,
+                                  vertical: 8.0,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.secondaryContainer,
+                                  borderRadius: BorderRadius.circular(10.0),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.info_outline,
+                                      size: 18.0,
+                                      color: colorScheme.onSecondaryContainer,
+                                    ),
+                                    const SizedBox(width: 8.0),
+                                    Expanded(
+                                      child: Text(
+                                        reason,
+                                        style: TextStyle(
+                                          fontSize: 13.0,
+                                          color:
+                                              colorScheme.onSecondaryContainer,
+                                        ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      visualDensity: VisualDensity.compact,
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                      icon: Icon(
+                                        Icons.close,
+                                        size: 18.0,
+                                        color: colorScheme.onSecondaryContainer,
+                                      ),
+                                      onPressed: () {
+                                        setState(
+                                          () =>
+                                              _dismissedNoUpdateBanner = true,
+                                        );
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        if (!isHomeScreenLoading &&
+                            homeScreenError == null &&
+                            data.isNotEmpty)
+                          _buildFeedStatusBar(colorScheme),
                       ],
                     ),
-                  );
-                },
-              ),
-
-            if (!isHomeScreenLoading &&
-                homeScreenError == null &&
-                data.isNotEmpty)
-              _buildFeedStatusBar(colorScheme),
-
-            // Data or Loading
-            isHomeScreenLoading == true
-                ? const PaperFeedSkeleton()
-                : homeScreenError != null
-                ? Padding(
-                    padding: const EdgeInsets.only(
-                      top: 160.0,
-                      left: 24.0,
-                      right: 24.0,
-                    ),
-                    child: Column(
-                      children: [
-                        Icon(
-                          Icons.cloud_off_outlined,
-                          color: colorScheme.onSurfaceVariant,
-                          size: 42.0,
-                        ),
-                        const SizedBox(height: 12.0),
-                        Text(
-                          homeScreenError!,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: colorScheme.onSurfaceVariant),
-                        ),
-                        const SizedBox(height: 12.0),
-                        TextButton(
-                          onPressed: () {
-                            search(resetPagination: true);
-                          },
-                          child: const Text("Try Again"),
-                        ),
-                      ],
-                    ),
-                  )
-                : data.isNotEmpty
-                ? Column(
-                    children: data.map((eachPaper) {
-                      return EachPaperCard(
-                        eachPaper: eachPaper,
-                        downloadPaper: downloadPaper,
-                        parseAndLaunchURL: parseAndLaunchURL,
-                        isBookmarked: false,
-                        onCardTap: () => openPaperDetails(eachPaper),
-                        onCategoryTap: searchCategoryByCode,
-                        notesRefreshToken: notesRefreshToken,
-                      );
-                    }).toList(),
-                  )
-                : const Padding(
-                    padding: EdgeInsets.only(top: 200.0),
-                    child: Center(child: Text("No Results Found!")),
                   ),
-
-            const SizedBox(height: 20.0),
-
-            // Pagination
-            if (data.isNotEmpty && _hasActiveSearchOrFilter)
-              _buildPaginationBar(colorScheme),
-
-            Container(
-              width: 100.0,
-              padding: const EdgeInsets.only(top: 200.0, bottom: 40.0),
-              child: Center(
-                child: Text(
-                  "Thank you to arXiv for use of its \nopen access interoperability.",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
-                    fontSize: 12.0,
-                  ),
-                ),
-              ),
-            ),
-            Center(
-              child: GestureDetector(
-                onTap: () {
-                  launchUrl(Uri.parse(sourceCodeURL));
-                },
-                child: Text(
-                  "View Source Code on GitHub",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: colorScheme.primary, fontSize: 12.0),
-                ),
-              ),
-            ),
-
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 5.0),
-                child: Wrap(
-                  alignment: WrapAlignment.center,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      "Made with 🤍 by ",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: colorScheme.onSurfaceVariant,
-                        fontSize: 12.0,
+                  if (isHomeScreenLoading)
+                    const SliverToBoxAdapter(child: PaperFeedSkeleton())
+                  else if (homeScreenError != null)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.only(
+                          top: 160.0,
+                          left: 24.0,
+                          right: 24.0,
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.cloud_off_outlined,
+                              color: colorScheme.onSurfaceVariant,
+                              size: 42.0,
+                            ),
+                            const SizedBox(height: 12.0),
+                            Text(
+                              homeScreenError!,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(height: 12.0),
+                            TextButton(
+                              onPressed: () {
+                                search(resetPagination: true);
+                              },
+                              child: const Text("Try Again"),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    GestureDetector(
-                      onTap: () {
-                        launchUrl(Uri.parse(scholarXivURL));
+                    )
+                  else if (data.isEmpty)
+                    const SliverToBoxAdapter(
+                      child: Padding(
+                        padding: EdgeInsets.only(top: 200.0),
+                        child: Center(child: Text("No Results Found!")),
+                      ),
+                    )
+                  else
+                    ValueListenableBuilder<Set<String>>(
+                      valueListenable: ReadPapersStore.notifier,
+                      builder: (context, readIds, _) {
+                        final firstReadIndex = data.indexWhere(
+                          (paper) => readIds.contains(
+                            ReadPapersStore.normalizeId(paper.id),
+                          ),
+                        );
+                        return SliverList.builder(
+                          itemCount: data.length,
+                          itemBuilder: (context, i) {
+                            final paper = data[i];
+                            final card = EachPaperCard(
+                              eachPaper: paper,
+                              downloadPaper: downloadPaper,
+                              parseAndLaunchURL: parseAndLaunchURL,
+                              isBookmarked: false,
+                              isNew: latestBatchDate != null &&
+                                  paper.publishedAt.trim() == latestBatchDate,
+                              onCardTap: () => openPaperDetails(paper),
+                              onCategoryTap: searchCategoryByCode,
+                              notesRefreshToken: notesRefreshToken,
+                            );
+                            if (_isCacheableBrowseFeed &&
+                                firstReadIndex > 0 &&
+                                i == firstReadIndex) {
+                              return Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _buildLastReadDivider(
+                                    colorScheme,
+                                    firstReadIndex,
+                                  ),
+                                  card,
+                                ],
+                              );
+                            }
+                            return card;
+                          },
+                        );
                       },
-                      child: Text(
-                        "ScholarXIV",
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: colorScheme.primary,
-                          fontSize: 12.0,
-                        ),
-                      ),
                     ),
-                  ],
-                ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 8.0)),
+                ],
               ),
             ),
-
-            const SizedBox(height: 20.0),
-          ],
-        ),
+          ),
+          ),
+          ),
+          _buildPullUpOverlay(colorScheme),
+        ],
       ),
     );
   }

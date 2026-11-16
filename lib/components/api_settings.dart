@@ -62,7 +62,6 @@ class _APISettingsState extends State<APISettings> {
       newBaseUrl.isNotEmpty ? newBaseUrl : Gemini.defaultOpenAiBaseUrl,
     );
     await apiBox.put("customModel", newCustomModel);
-    await Hive.close();
 
     widget.configAPIKey();
   }
@@ -73,7 +72,6 @@ class _APISettingsState extends State<APISettings> {
     Box apiBox = await Hive.openBox("apibox");
     await apiBox.put("apikey", "");
     await apiBox.put("customModel", "");
-    await Hive.close();
     widget.configAPIKey();
   }
 
@@ -83,7 +81,6 @@ class _APISettingsState extends State<APISettings> {
     apiKey = await apiBox.get("apikey") ?? "";
     baseUrl = await apiBox.get("baseUrl") ?? Gemini.defaultOpenAiBaseUrl;
     customModel = await apiBox.get("customModel") ?? "";
-    await Hive.close();
 
     baseUrlController.text = baseUrl;
     customModelController.text = customModel;

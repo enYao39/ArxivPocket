@@ -6,6 +6,7 @@ import 'package:arxiv/services/author_parser.dart';
 import 'package:arxiv/services/citation_formatter.dart';
 import 'package:arxiv/services/main_page_style_store.dart';
 import 'package:arxiv/services/paper_notes_store.dart';
+import 'package:arxiv/services/read_papers_store.dart';
 import 'package:arxiv/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -566,6 +567,28 @@ class _PaperDetailPageState extends State<PaperDetailPage> {
       appBar: AppBar(
         title: const Text("Paper Details"),
         actions: [
+          ValueListenableBuilder<Set<String>>(
+            valueListenable: ReadPapersStore.notifier,
+            builder: (context, readIds, _) {
+              final isRead = readIds.contains(
+                ReadPapersStore.normalizeId(widget.paper.id),
+              );
+              return IconButton(
+                tooltip: isRead ? "Mark as unread" : "Mark as read",
+                icon: Icon(
+                  isRead
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                ),
+                onPressed: () {
+                  ReadPapersStore().toggleRead(
+                    widget.paper.id,
+                    paper: widget.paper,
+                  );
+                },
+              );
+            },
+          ),
           PopupMenuButton<_CitationMenuAction>(
             tooltip: "Copy citation",
             icon: const Icon(Icons.format_quote_outlined),
@@ -583,6 +606,7 @@ class _PaperDetailPageState extends State<PaperDetailPage> {
             isBookmarked: false,
             onCategoryTap: _searchCategory,
             notesRefreshToken: _notesRefreshToken,
+            dimWhenRead: false,
           ),
           _buildAuthorChips(),
           _buildMetadataPanel(),
