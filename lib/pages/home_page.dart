@@ -54,10 +54,12 @@ class _HomePageState extends State<HomePage> {
 
   List<Paper> data = [];
   List<Paper> _cachedFeedPapers = [];
+  List<int> _pageBoundaries = [];
   int _nextFetchOffset = 0;
   final ValueNotifier<double> _pullUpOverscrollNotifier = ValueNotifier<double>(
     0.0,
   );
+  bool _isDraggingPullUp = false;
   bool _pullUpHapticFired = false;
   static const double _pullUpTriggerDistance = 88.0;
   int? _pendingRestoreVisibleCount;
@@ -186,6 +188,16 @@ class _HomePageState extends State<HomePage> {
     return suggestedPapers();
   }
 
+  List<int> _buildInitialBoundaries(int visibleCount) {
+    final step = _effectivePageSize;
+    if (step <= 0 || visibleCount <= step) return [];
+    final boundaries = <int>[];
+    for (var idx = step; idx < visibleCount; idx += step) {
+      boundaries.add(idx);
+    }
+    return boundaries;
+  }
+
   Future<void> search({
     bool? resetPagination,
     bool forceNetwork = false,
@@ -228,6 +240,7 @@ class _HomePageState extends State<HomePage> {
         setState(() {
           _cachedFeedPapers = cached.papers;
           data = cached.papers.take(visibleCount).toList();
+          _pageBoundaries = _buildInitialBoundaries(data.length);
           _nextFetchOffset = _effectivePageSize;
           lastSearchResult = ArxivSearchResult(
             papers: data,
@@ -279,6 +292,7 @@ class _HomePageState extends State<HomePage> {
       homeScreenError = null;
       data = [];
       _cachedFeedPapers = [];
+      _pageBoundaries = [];
       _isLoadingMore = false;
     });
 
@@ -309,6 +323,7 @@ class _HomePageState extends State<HomePage> {
         _cachedFeedPapers = merged.papers;
         lastSearchResult = result;
         data = merged.papers.take(visibleCount).toList();
+        _pageBoundaries = _buildInitialBoundaries(data.length);
         _nextFetchOffset = startPagination + _effectivePageSize;
         homeScreenError = null;
         isHomeScreenLoading = false;
@@ -335,13 +350,28 @@ class _HomePageState extends State<HomePage> {
   Future<void> _loadNextPage() async {
     if (_isLoadingMore || !_canLoadMore) return;
 
-    // 1. Cache-first: reveal more cached entries before hitting the network.
+    final requestSerial = _searchRequestSerial;
+
+    // 1. Cache-first: reveal more cached entries after a brief spinner animation.
     if (_isCacheableBrowseFeed && data.length < _cachedFeedPapers.length) {
+      setState(() {
+        _isLoadingMore = true;
+      });
+      await Future.delayed(const Duration(milliseconds: 350));
+      if (!mounted || requestSerial != _searchRequestSerial) {
+        return;
+      }
+
+      final pageStep = _effectivePageSize;
       final nextCount = math.min(
-        data.length + maxContent,
+        data.length + pageStep,
         _cachedFeedPapers.length,
       );
       setState(() {
+        _isLoadingMore = false;
+        if (nextCount > data.length) {
+          _pageBoundaries = [..._pageBoundaries, data.length];
+        }
         data = _cachedFeedPapers.take(nextCount).toList();
       });
       _saveCurrentFeedState();
@@ -349,7 +379,6 @@ class _HomePageState extends State<HomePage> {
     }
 
     // 2. No more cached entries: fetch next page from arXiv and append.
-    final requestSerial = _searchRequestSerial;
     setState(() {
       _isLoadingMore = true;
     });
@@ -400,6 +429,9 @@ class _HomePageState extends State<HomePage> {
       _isLoadingMore = false;
       _nextFetchOffset = offsetToFetch + _effectivePageSize;
       lastSearchResult = result;
+      if (newPapers.isNotEmpty) {
+        _pageBoundaries = [..._pageBoundaries, data.length];
+      }
       data = [...data, ...newPapers];
       if (_isCacheableBrowseFeed) {
         _cachedFeedPapers = [..._cachedFeedPapers, ...newPapers];
@@ -882,6 +914,52 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _buildPageDivider(
+    ColorScheme colorScheme,
+    int pageNumber,
+    int rangeStart,
+    int rangeEnd,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16.0, 10.0, 16.0, 6.0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Divider(
+              color: colorScheme.outlineVariant.withAlpha(140),
+              thickness: 1.0,
+            ),
+          ),
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 10.0),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 10.0,
+              vertical: 3.0,
+            ),
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(10.0),
+            ),
+            child: Text(
+              "Page $pageNumber · $rangeStart–$rangeEnd",
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Divider(
+              color: colorScheme.outlineVariant.withAlpha(140),
+              thickness: 1.0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   double _pullUpVisualLift(double overscroll) {
     if (_isLoadingMore) return 64.0;
     return (overscroll * 0.65).clamp(0.0, 92.0);
@@ -891,17 +969,31 @@ class _HomePageState extends State<HomePage> {
     return ValueListenableBuilder<double>(
       valueListenable: _pullUpOverscrollNotifier,
       builder: (context, overscroll, _) {
-        final lift = _pullUpVisualLift(overscroll);
-        if (lift <= 1.0) return const SizedBox.shrink();
-
+        final targetLift = _pullUpVisualLift(overscroll);
         final progress = (overscroll / _pullUpTriggerDistance).clamp(0.0, 1.0);
         final ready = overscroll >= _pullUpTriggerDistance;
 
-        return Positioned(
-          left: 0.0,
-          right: 0.0,
-          bottom: 0.0,
-          height: lift,
+        return TweenAnimationBuilder<double>(
+          tween: Tween<double>(end: targetLift),
+          duration: _isDraggingPullUp
+              ? Duration.zero
+              : const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          builder: (context, lift, child) {
+            if (lift <= 1.0 && !_isLoadingMore) {
+              return const SizedBox.shrink();
+            }
+            return Positioned(
+              left: 0.0,
+              right: 0.0,
+              bottom: 0.0,
+              height: lift.clamp(0.0, 92.0),
+              child: Opacity(
+                opacity: (lift / 28.0).clamp(0.0, 1.0),
+                child: child,
+              ),
+            );
+          },
           child: IgnorePointer(
             child: Center(
               child: Row(
@@ -951,6 +1043,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _updatePullUpOverscroll(double nextValue) {
+    _isDraggingPullUp = nextValue > 0.0;
     final clamped = nextValue.clamp(0.0, 140.0);
     if (clamped >= _pullUpTriggerDistance && !_pullUpHapticFired) {
       _pullUpHapticFired = true;
@@ -984,6 +1077,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _finishPullUpGesture() {
+    _isDraggingPullUp = false;
     final shouldLoad =
         _pullUpOverscrollNotifier.value >= _pullUpTriggerDistance &&
         !_isLoadingMore &&
@@ -1100,9 +1194,19 @@ class _HomePageState extends State<HomePage> {
               child: ValueListenableBuilder<double>(
                 valueListenable: _pullUpOverscrollNotifier,
                 builder: (context, overscroll, child) {
-                  final lift = _pullUpVisualLift(overscroll);
-                  return Transform.translate(
-                    offset: Offset(0.0, -lift),
+                  final targetLift = _pullUpVisualLift(overscroll);
+                  return TweenAnimationBuilder<double>(
+                    tween: Tween<double>(end: targetLift),
+                    duration: _isDraggingPullUp
+                        ? Duration.zero
+                        : const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    builder: (context, lift, innerChild) {
+                      return Transform.translate(
+                        offset: Offset(0.0, -lift),
+                        child: innerChild,
+                      );
+                    },
                     child: child,
                   );
                 },
@@ -1321,16 +1425,36 @@ class _HomePageState extends State<HomePage> {
                               onCategoryTap: searchCategoryByCode,
                               notesRefreshToken: notesRefreshToken,
                             );
-                            if (_isCacheableBrowseFeed &&
+                            final pageBoundaryIdx = _isCacheableBrowseFeed
+                                ? _pageBoundaries.indexOf(i)
+                                : -1;
+                            final showPageDivider = pageBoundaryIdx != -1;
+                            final showLastReadDivider =
+                                _isCacheableBrowseFeed &&
                                 firstReadIndex > 0 &&
-                                i == firstReadIndex) {
+                                i == firstReadIndex;
+                            if (showPageDivider || showLastReadDivider) {
+                              final nextBoundary =
+                                  showPageDivider &&
+                                      pageBoundaryIdx + 1 <
+                                          _pageBoundaries.length
+                                  ? _pageBoundaries[pageBoundaryIdx + 1]
+                                  : data.length;
                               return Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  _buildLastReadDivider(
-                                    colorScheme,
-                                    firstReadIndex,
-                                  ),
+                                  if (showPageDivider)
+                                    _buildPageDivider(
+                                      colorScheme,
+                                      pageBoundaryIdx + 2,
+                                      i + 1,
+                                      nextBoundary,
+                                    ),
+                                  if (showLastReadDivider)
+                                    _buildLastReadDivider(
+                                      colorScheme,
+                                      firstReadIndex,
+                                    ),
                                   card,
                                 ],
                               );
