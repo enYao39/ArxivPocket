@@ -1,4 +1,6 @@
 // ignore_for_file: file_names
+import 'dart:io';
+
 import 'package:arxiv/models/paper.dart';
 import 'package:arxiv/services/aosp_tts_service.dart';
 import 'package:arxiv/services/speech_rate_store.dart';
@@ -156,7 +158,7 @@ class _FullScreenSummaryPageState extends State<FullScreenSummaryPage> {
         children: [
           Padding(
             padding: const EdgeInsets.only(top: 10.0, left: 20.0, right: 20.0),
-            child: Paper.containsLatex(summaryText)
+            child: !Platform.isLinux && Paper.containsLatex(summaryText)
                 ? TeXView(
                     loadingWidgetBuilder: (context) => SelectableText(
                       summaryText,

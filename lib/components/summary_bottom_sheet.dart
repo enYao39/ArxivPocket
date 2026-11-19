@@ -1,4 +1,6 @@
 // ignore_for_file: file_names
+import 'dart:io';
+
 import 'package:arxiv/components/app_bottom_sheet.dart';
 import 'package:arxiv/models/paper.dart';
 import 'package:arxiv/pages/full_screen_summary_page.dart';
@@ -163,7 +165,7 @@ class _SummaryBottomSheetState extends State<SummaryBottomSheet> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16.0, 0.0, 16.0, 24.0),
         children: [
-          Paper.containsLatex(summaryText)
+          !Platform.isLinux && Paper.containsLatex(summaryText)
               ? TeXView(
                   loadingWidgetBuilder: (context) => SelectableText(
                     summaryText,

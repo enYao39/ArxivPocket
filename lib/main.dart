@@ -1,4 +1,5 @@
 import "dart:async";
+import "dart:io";
 
 import "package:arxiv/models/bookmarks.dart";
 import "package:arxiv/models/chat_message.dart";
@@ -25,11 +26,13 @@ void main() async {
   Hive.registerAdapter(ChatMessageAdapter());
   Hive.registerAdapter(ChatThreadAdapter());
   Hive.registerAdapter(PaperNoteAdapter());
-  unawaited(
-    TeXRenderingServer.start()
-        .timeout(const Duration(seconds: 3))
-        .catchError((_) {}),
-  );
+  if (!Platform.isLinux) {
+    unawaited(
+      TeXRenderingServer.start()
+          .timeout(const Duration(seconds: 3))
+          .catchError((_) {}),
+    );
+  }
   runApp(const MyApp());
 }
 

@@ -448,7 +448,7 @@ class _EachPaperCardState extends State<EachPaperCard> {
                       child: Container(
                         alignment: Alignment.center,
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 20.0,
+                          horizontal: 12.0,
                           vertical: 8.0,
                         ),
                         decoration: BoxDecoration(
@@ -460,6 +460,8 @@ class _EachPaperCardState extends State<EachPaperCard> {
                         ),
                         child: Text(
                           "Abstract",
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: colorScheme.onPrimaryContainer,
                             fontWeight: FontWeight.bold,
@@ -468,20 +470,21 @@ class _EachPaperCardState extends State<EachPaperCard> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 10.0),
+                  const SizedBox(width: 6.0),
                   Semantics(
                     button: true,
                     label: "Collect paper. Long press to choose folder.",
                     child: InkResponse(
                       onTap: bookmarkToggle,
                       onLongPress: _openFolderPicker,
-                      radius: 20.0,
+                      radius: 18.0,
                       child: Padding(
-                        padding: const EdgeInsets.all(8.0),
+                        padding: const EdgeInsets.all(6.0),
                         child: Icon(
                           isBookmarked == false
                               ? Icons.bookmark_border
                               : Icons.bookmark,
+                          size: 20.0,
                           color: isBookmarked
                               ? colorScheme.primary
                               : colorScheme.onSurfaceVariant,
@@ -490,24 +493,35 @@ class _EachPaperCardState extends State<EachPaperCard> {
                     ),
                   ),
                   IconButton(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.all(6.0),
+                    constraints: const BoxConstraints(),
                     onPressed: () {
                       shareLink(paperPdfUrl());
                     },
                     icon: Icon(
                       Ionicons.share_outline,
+                      size: 20.0,
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ),
                   IconButton(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.all(6.0),
+                    constraints: const BoxConstraints(),
                     onPressed: () {
                       widget.downloadPaper(paperPdfUrl());
                     },
                     icon: Icon(
                       Icons.downloading_outlined,
+                      size: 20.0,
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ),
                   IconButton(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.all(6.0),
+                    constraints: const BoxConstraints(),
                     onPressed: () {
                       Navigator.push(
                         context,
@@ -519,6 +533,7 @@ class _EachPaperCardState extends State<EachPaperCard> {
                     },
                     icon: Icon(
                       Icons.auto_awesome_outlined,
+                      size: 20.0,
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ),

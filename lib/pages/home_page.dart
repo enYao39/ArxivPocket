@@ -1284,8 +1284,8 @@ class _HomePageState extends State<HomePage> {
     return null;
   }
 
-  Widget _buildActiveFilterChips(ColorScheme colorScheme) {
-    final fullGroup = _matchedFullGroupName();
+  Widget _buildActiveFilterChips(ColorScheme colorScheme, {bool isWide = false}) {
+    final fullGroup = isWide ? null : _matchedFullGroupName();
     final chips = <Widget>[];
 
     if (fullGroup != null) {
@@ -1305,7 +1305,7 @@ class _HomePageState extends State<HomePage> {
           visualDensity: VisualDensity.compact,
         ),
       );
-    } else if (selectedCategories.length <= 2) {
+    } else if (isWide || selectedCategories.length <= 2) {
       for (final cat in selectedCategories) {
         chips.add(
           InputChip(
@@ -1363,17 +1363,23 @@ class _HomePageState extends State<HomePage> {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12.0, 0.0, 12.0, 6.0),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (var i = 0; i < chips.length; i++) ...[
-              if (i > 0) const SizedBox(width: 8.0),
-              chips[i],
-            ],
-          ],
-        ),
-      ),
+      child: isWide
+          ? Wrap(
+              spacing: 8.0,
+              runSpacing: 6.0,
+              children: chips,
+            )
+          : SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (var i = 0; i < chips.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 8.0),
+                    chips[i],
+                  ],
+                ],
+              ),
+            ),
     );
   }
 
@@ -1453,15 +1459,204 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _buildNavigationRail(ColorScheme colorScheme) {
+    return NavigationRail(
+      selectedIndex: 0,
+      minWidth: 76.0,
+      labelType: NavigationRailLabelType.all,
+      backgroundColor: colorScheme.surface,
+      leading: const SizedBox(height: 8.0),
+      onDestinationSelected: (index) {
+        switch (index) {
+          case 0:
+            _scrollToTop();
+            break;
+          case 1:
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => BookmarksPage(
+                  downloadPaper: downloadPaper,
+                  parseAndLaunchURL: parseAndLaunchURL,
+                  onSearchQuerySelected: runFeedSearch,
+                ),
+              ),
+            );
+            break;
+          case 2:
+            openPaperNotes();
+            break;
+          case 3:
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const AIChatPage(paperData: null),
+              ),
+            );
+            break;
+          case 4:
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const SettingsPage()),
+            );
+            break;
+        }
+      },
+      destinations: const [
+        NavigationRailDestination(
+          icon: Icon(Icons.article_outlined),
+          selectedIcon: Icon(Icons.article),
+          label: Text("Feed"),
+        ),
+        NavigationRailDestination(
+          icon: Icon(Icons.bookmark_border_outlined),
+          label: Text("Saved"),
+        ),
+        NavigationRailDestination(
+          icon: Icon(Icons.sticky_note_2_outlined),
+          label: Text("Notes"),
+        ),
+        NavigationRailDestination(
+          icon: Icon(Icons.auto_awesome_outlined),
+          label: Text("AI Chat"),
+        ),
+        NavigationRailDestination(
+          icon: Icon(Icons.settings_outlined),
+          label: Text("Settings"),
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _buildSliverFeedRows(
+    ColorScheme colorScheme,
+    Set<String> readIds,
+    String? latestBatchDate,
+    int columns,
+  ) {
+    final firstReadIndex = data.indexWhere(
+      (paper) => readIds.contains(ReadPapersStore.normalizeId(paper.id)),
+    );
+
+    Widget buildCard(Paper paper) {
+      return EachPaperCard(
+        eachPaper: paper,
+        downloadPaper: downloadPaper,
+        parseAndLaunchURL: parseAndLaunchURL,
+        isBookmarked: false,
+        isNew:
+            latestBatchDate != null &&
+            paper.publishedAt.trim() == latestBatchDate,
+        onCardTap: () => openPaperDetails(paper),
+        onCategoryTap: searchCategoryByCode,
+        notesRefreshToken: notesRefreshToken,
+      );
+    }
+
+    final rows = <Widget>[];
+    var segmentBuffer = <Paper>[];
+
+    int estimatedCardWeight(Paper p) =>
+        p.title.length + (p.authors.length > 90 ? 90 : p.authors.length) + 120;
+
+    void flushSegment() {
+      if (segmentBuffer.isEmpty) return;
+      if (columns <= 1) {
+        for (final paper in segmentBuffer) {
+          rows.add(buildCard(paper));
+        }
+      } else {
+        final colWidgets = List.generate(columns, (_) => <Widget>[]);
+        final colHeights = List<int>.filled(columns, 0);
+
+        for (final paper in segmentBuffer) {
+          var shortestCol = 0;
+          for (var c = 1; c < columns; c++) {
+            if (colHeights[c] < colHeights[shortestCol]) {
+              shortestCol = c;
+            }
+          }
+          colWidgets[shortestCol].add(buildCard(paper));
+          colHeights[shortestCol] += estimatedCardWeight(paper);
+        }
+
+        rows.add(
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var c = 0; c < columns; c++)
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: colWidgets[c],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      }
+      segmentBuffer.clear();
+    }
+
+    for (var i = 0; i < data.length; i++) {
+      final pageBoundaryIdx =
+          _isCacheableBrowseFeed ? _pageBoundaries.indexOf(i) : -1;
+      final showPageDivider = pageBoundaryIdx != -1;
+      final showLastReadDivider =
+          _isCacheableBrowseFeed &&
+          firstReadIndex > 0 &&
+          i == firstReadIndex;
+
+      if (showPageDivider || showLastReadDivider) {
+        flushSegment();
+        if (showPageDivider) {
+          final nextBoundary =
+              pageBoundaryIdx + 1 < _pageBoundaries.length
+                  ? _pageBoundaries[pageBoundaryIdx + 1]
+                  : data.length;
+          rows.add(
+            _buildPageDivider(
+              colorScheme,
+              pageBoundaryIdx + 2,
+              i + 1,
+              nextBoundary,
+            ),
+          );
+        }
+        if (showLastReadDivider) {
+          rows.add(_buildLastReadDivider(colorScheme, firstReadIndex));
+        }
+      }
+
+      segmentBuffer.add(data[i]);
+    }
+    flushSegment();
+    return rows;
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final latestBatchDate = _latestBatchDate();
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final useRail = screenWidth >= 760;
+    final feedWidth = useRail ? screenWidth - 77.0 : screenWidth;
+    final columns = feedWidth >= 1500
+        ? 5
+        : (feedWidth >= 1150
+              ? 4
+              : (feedWidth >= 820 ? 3 : (feedWidth >= 560 ? 2 : 1)));
 
     return Scaffold(
       appBar: AppBar(
         title: const Text("ArxivPocket"),
-        actions: [
+        actions: useRail
+            ? null
+            : [
           // SETTINGS
           IconButton(
             onPressed: () {
@@ -1514,8 +1709,19 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(width: 10.0),
         ],
       ),
-      body: Stack(
+      body: Row(
         children: [
+          if (useRail) ...[
+            _buildNavigationRail(colorScheme),
+            VerticalDivider(
+              width: 1.0,
+              thickness: 1.0,
+              color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+            ),
+          ],
+          Expanded(
+            child: Stack(
+              children: [
           Listener(
             onPointerSignal: _handlePointerSignal,
             onPointerMove: _handlePointerMove,
@@ -1552,19 +1758,28 @@ class _HomePageState extends State<HomePage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        SearchBox(
-                          searchTermController: searchTermController,
-                          searchFunction: search,
-                          sortOption: sortOption,
-                          onSortOptionChanged: changeSortOption,
-                          onCategoriesChanged: setCategories,
-                          onClearCategory: clearCategoryFilter,
-                          onOpenAdvancedSearch: _openAdvancedSearch,
-                          selectedCategories: selectedCategories,
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 780.0),
+                            child: SearchBox(
+                              searchTermController: searchTermController,
+                              searchFunction: search,
+                              sortOption: sortOption,
+                              onSortOptionChanged: changeSortOption,
+                              onCategoriesChanged: setCategories,
+                              onClearCategory: clearCategoryFilter,
+                              onOpenAdvancedSearch: _openAdvancedSearch,
+                              selectedCategories: selectedCategories,
+                            ),
+                          ),
                         ),
                         if (selectedCategories.isNotEmpty ||
                             _activeAdvancedQuery != null)
-                          _buildActiveFilterChips(colorScheme),
+                          _buildActiveFilterChips(
+                            colorScheme,
+                            isWide: feedWidth >= 680,
+                          ),
                         if (!isHomeScreenLoading &&
                             homeScreenError == null &&
                             data.isNotEmpty &&
@@ -1701,62 +1916,15 @@ class _HomePageState extends State<HomePage> {
                     ValueListenableBuilder<Set<String>>(
                       valueListenable: ReadPapersStore.notifier,
                       builder: (context, readIds, _) {
-                        final firstReadIndex = data.indexWhere(
-                          (paper) => readIds.contains(
-                            ReadPapersStore.normalizeId(paper.id),
-                          ),
+                        final rows = _buildSliverFeedRows(
+                          colorScheme,
+                          readIds,
+                          latestBatchDate,
+                          columns,
                         );
                         return SliverList.builder(
-                          itemCount: data.length,
-                          itemBuilder: (context, i) {
-                            final paper = data[i];
-                            final card = EachPaperCard(
-                              eachPaper: paper,
-                              downloadPaper: downloadPaper,
-                              parseAndLaunchURL: parseAndLaunchURL,
-                              isBookmarked: false,
-                              isNew: latestBatchDate != null &&
-                                  paper.publishedAt.trim() == latestBatchDate,
-                              onCardTap: () => openPaperDetails(paper),
-                              onCategoryTap: searchCategoryByCode,
-                              notesRefreshToken: notesRefreshToken,
-                            );
-                            final pageBoundaryIdx = _isCacheableBrowseFeed
-                                ? _pageBoundaries.indexOf(i)
-                                : -1;
-                            final showPageDivider = pageBoundaryIdx != -1;
-                            final showLastReadDivider =
-                                _isCacheableBrowseFeed &&
-                                firstReadIndex > 0 &&
-                                i == firstReadIndex;
-                            if (showPageDivider || showLastReadDivider) {
-                              final nextBoundary =
-                                  showPageDivider &&
-                                      pageBoundaryIdx + 1 <
-                                          _pageBoundaries.length
-                                  ? _pageBoundaries[pageBoundaryIdx + 1]
-                                  : data.length;
-                              return Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (showPageDivider)
-                                    _buildPageDivider(
-                                      colorScheme,
-                                      pageBoundaryIdx + 2,
-                                      i + 1,
-                                      nextBoundary,
-                                    ),
-                                  if (showLastReadDivider)
-                                    _buildLastReadDivider(
-                                      colorScheme,
-                                      firstReadIndex,
-                                    ),
-                                  card,
-                                ],
-                              );
-                            }
-                            return card;
-                          },
+                          itemCount: rows.length,
+                          itemBuilder: (context, i) => rows[i],
                         );
                       },
                     ),
@@ -1768,6 +1936,9 @@ class _HomePageState extends State<HomePage> {
           ),
           ),
           _buildPullUpOverlay(colorScheme),
+        ],
+      ),
+          ),
         ],
       ),
     );

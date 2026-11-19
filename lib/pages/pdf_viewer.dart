@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:ionicons_plus/ionicons_plus.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class PDFViewer extends StatefulWidget {
@@ -239,6 +240,19 @@ class _PDFViewerState extends State<PDFViewer> {
             ],
           ),
         ),
+      );
+    }
+
+    if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+      return SfPdfViewer.file(
+        File(widget.savePath),
+        onDocumentLoadFailed: (details) {
+          if (!mounted) return;
+          setState(() {
+            _isReady = false;
+            _errorMessage = 'Failed to render PDF: ${details.description}';
+          });
+        },
       );
     }
 
