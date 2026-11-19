@@ -1,4 +1,4 @@
-name: Android CI & Release
+name: CI & Release
 
 on:
   push:
@@ -79,5 +79,90 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: build/app/outputs/flutter-apk/app-*-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-linux-appimage:
+    name: Build Linux AppImage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Linux release bundle
+        run: |
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          flutter build linux --release \
+            --dart-define=RELEASE_TAG="$RELEASE_TAG" \
+            --dart-define=BUILD_DATE="$BUILD_DATE"
+
+      - name: Package AppImage
+        run: |
+          curl -fsSL -o /tmp/appimagetool-x86_64.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool-x86_64.AppImage
+          curl -fsSL -o /tmp/runtime-x86_64 \
+            https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+
+          rm -rf /tmp/ArxivPocket.AppDir
+          mkdir -p /tmp/ArxivPocket.AppDir/usr/bin
+          cp -a build/linux/x64/release/bundle/* /tmp/ArxivPocket.AppDir/usr/bin/
+          cp assets/icon/icon.png /tmp/ArxivPocket.AppDir/arxivpocket.png
+          cp assets/icon/icon.png /tmp/ArxivPocket.AppDir/.DirIcon
+
+          cat <<'EOF' > /tmp/ArxivPocket.AppDir/AppRun
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          export LD_LIBRARY_PATH="$HERE/usr/bin/lib:$LD_LIBRARY_PATH"
+          exec "$HERE/usr/bin/arxiv" "$@"
+          EOF
+          chmod +x /tmp/ArxivPocket.AppDir/AppRun
+
+          cat <<'EOF' > /tmp/ArxivPocket.AppDir/arxivpocket.desktop
+          [Desktop Entry]
+          Type=Application
+          Name=ArxivPocket
+          Comment=Browse and read arXiv papers
+          Exec=arxiv
+          Icon=arxivpocket
+          Categories=Science;
+          Terminal=false
+          EOF
+
+          ARCH=x86_64 /tmp/appimagetool-x86_64.AppImage \
+            --appimage-extract-and-run \
+            --runtime-file /tmp/runtime-x86_64 \
+            /tmp/ArxivPocket.AppDir \
+            build/linux/x64/release/ArxivPocket-x86_64.AppImage
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: build/linux/x64/release/ArxivPocket-x86_64.AppImage
+
+      - name: Upload AppImage to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/linux/x64/release/ArxivPocket-x86_64.AppImage
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
