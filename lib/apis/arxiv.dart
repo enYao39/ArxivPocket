@@ -365,9 +365,9 @@ class Arxiv {
     final trimmed = input.trim();
     if (trimmed.isEmpty) return null;
 
-    // Match arXiv URLs like https://arxiv.org/abs/2301.07041v1 or /pdf/2301.07041.pdf
+    // Match arXiv URLs like https://arxiv.org/abs/2301.07041v1 or /pdf/2301.07041.pdf?foo=bar
     final urlMatch = RegExp(
-      r'^(?:https?:\/\/)?(?:export\.)?arxiv\.org\/(?:abs|pdf|html)\/([^\s?#]+?)(?:\.pdf)?\/?$',
+      r'^(?:https?:\/\/)?(?:www\.|export\.)?arxiv\.org\/(?:abs|pdf|html)\/([^\s?#]+?)(?:\.pdf)?\/?(?:[?#].*)?$',
       caseSensitive: false,
     ).firstMatch(trimmed);
     final candidate = (urlMatch?.group(1) ?? trimmed)

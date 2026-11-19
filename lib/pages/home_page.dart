@@ -1,8 +1,10 @@
 // ignore_for_file: file_names
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:arxiv/apis/arxiv.dart';
 import 'package:arxiv/components/advanced_search_sheet.dart';
+import 'package:arxiv/components/category_picker_sheet.dart';
 import 'package:arxiv/components/each_paper_card.dart';
 import 'package:arxiv/components/paper_card_skeleton.dart';
 import 'package:arxiv/components/search_box.dart';
@@ -21,6 +23,7 @@ import 'package:arxiv/pages/paper_detail_page.dart';
 import 'package:arxiv/pages/paper_notes_page.dart';
 import 'package:arxiv/pages/pdf_viewer.dart';
 import 'package:arxiv/pages/settings_page.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -40,7 +43,9 @@ class _HomePageState extends State<HomePage> {
   int paginationGap = 30;
   var pdfBaseURL = "https://arxiv.org/pdf";
   ArxivSortOption sortOption = ArxivSortOption.newest;
-  ArxivCategory? selectedCategory;
+  List<ArxivCategory> selectedCategories = [];
+  ArxivCategory? get selectedCategory =>
+      selectedCategories.isNotEmpty ? selectedCategories.first : null;
   ArxivAdvancedQuery? _activeAdvancedQuery;
   String _lastAdvancedSummary = "";
 
@@ -61,6 +66,10 @@ class _HomePageState extends State<HomePage> {
   );
   bool _isDraggingPullUp = false;
   bool _pullUpHapticFired = false;
+  static const MethodChannel _appLinksChannel = MethodChannel(
+    "com.example.arxiv/app_links",
+  );
+  Timer? _wheelPullUpTimer;
   static const double _pullUpTriggerDistance = 88.0;
   int? _pendingRestoreVisibleCount;
   double? _pendingRestoreScrollOffset;
@@ -69,12 +78,12 @@ class _HomePageState extends State<HomePage> {
   int _searchRequestSerial = 0;
 
   bool get _hasActiveSearchOrFilter =>
-      selectedCategory != null ||
+      selectedCategories.isNotEmpty ||
       _activeAdvancedQuery != null ||
       searchTermController.text.trim().isNotEmpty;
 
   bool get _isCacheableBrowseFeed =>
-      selectedCategory != null &&
+      selectedCategories.isNotEmpty &&
       _activeAdvancedQuery == null &&
       searchTermController.text.trim().isEmpty;
 
@@ -117,6 +126,7 @@ class _HomePageState extends State<HomePage> {
       LastFeedState(
         query: searchTermController.text.trim(),
         categoryCode: selectedCategory?.code,
+        categoryCodes: selectedCategories.map((c) => c.code).toList(),
         sortOption: sortOption,
         startPagination: startPagination,
         pageSize: maxContent,
@@ -142,7 +152,9 @@ class _HomePageState extends State<HomePage> {
     final rawSearchInput = searchTermController.text.trim();
     final excludeCrossListed =
         MainPageStyleStore.notifier.value.excludeCrossListed;
-    final filterPrimary = excludeCrossListed ? selectedCategory?.code : null;
+    final filterPrimary = excludeCrossListed && selectedCategories.isNotEmpty
+        ? selectedCategories.map((c) => c.code).join(",")
+        : null;
 
     if (_activeAdvancedQuery != null) {
       return Arxiv.advancedSearchWithMetadata(
@@ -150,10 +162,10 @@ class _HomePageState extends State<HomePage> {
         page: pageOffset,
       );
     }
-    if (selectedCategory != null && rawSearchInput.isEmpty) {
+    if (selectedCategories.isNotEmpty && rawSearchInput.isEmpty) {
       return Arxiv.advancedSearchWithMetadata(
         ArxivAdvancedQuery(
-          category: selectedCategory,
+          categories: selectedCategories,
           includeCrossList: !excludeCrossListed,
           sortOption: sortOption,
           pageSize: ArxivWebSearch.normalizeWebPageSize(maxContent),
@@ -163,12 +175,12 @@ class _HomePageState extends State<HomePage> {
       );
     }
     if (rawSearchInput.isNotEmpty) {
-      if (selectedCategory != null &&
+      if (selectedCategories.isNotEmpty &&
           Arxiv.extractArxivId(rawSearchInput) == null) {
         return Arxiv.advancedSearchWithMetadata(
           ArxivAdvancedQuery(
             terms: [ArxivSearchTermRow(term: rawSearchInput)],
-            category: selectedCategory,
+            categories: selectedCategories,
             includeCrossList: !excludeCrossListed,
             sortOption: sortOption,
             pageSize: ArxivWebSearch.normalizeWebPageSize(maxContent),
@@ -185,7 +197,12 @@ class _HomePageState extends State<HomePage> {
         filterPrimaryCategory: filterPrimary,
       );
     }
-    return suggestedPapers();
+    return const ArxivSearchResult(
+      papers: [],
+      feed: {},
+      rawResponse: {},
+      rawXml: "",
+    );
   }
 
   List<int> _buildInitialBoundaries(int visibleCount) {
@@ -214,19 +231,41 @@ class _HomePageState extends State<HomePage> {
       _lastAdvancedSummary = "";
     }
 
+    if (selectedCategories.isEmpty &&
+        _activeAdvancedQuery == null &&
+        rawSearchInput.isEmpty) {
+      _pendingRestoreVisibleCount = null;
+      _pendingRestoreScrollOffset = null;
+      setState(() {
+        isHomeScreenLoading = false;
+        _isLoadingMore = false;
+        homeScreenError = null;
+        data = [];
+        _cachedFeedPapers = [];
+        _pageBoundaries = [];
+        lastSearchResult = null;
+      });
+      _saveCurrentFeedState(scrollOffset: 0.0);
+      return;
+    }
+
     final excludeCrossListed =
         MainPageStyleStore.notifier.value.excludeCrossListed;
     final isCacheable = _isCacheableBrowseFeed && startPagination == 0;
     final cacheKey = isCacheable
         ? FeedCacheStore.buildKey(
-            categoryCode: selectedCategory?.code,
+            categoryCodes: selectedCategories.map((c) => c.code).toList(),
             sortOption: sortOption,
             excludeCrossListed: excludeCrossListed,
           )
         : null;
 
     if (isCacheable && !forceNetwork && cacheKey != null) {
-      final cached = await FeedCacheStore().load(cacheKey);
+      final cached = await FeedCacheStore().loadForCategories(
+        categoryCodes: selectedCategories.map((c) => c.code).toList(),
+        sortOption: sortOption,
+        excludeCrossListed: excludeCrossListed,
+      );
       if (!mounted || requestSerial != _searchRequestSerial) return;
 
       if (cached != null && cached.papers.isNotEmpty) {
@@ -410,7 +449,7 @@ class _HomePageState extends State<HomePage> {
       final excludeCrossListed =
           MainPageStyleStore.notifier.value.excludeCrossListed;
       final cacheKey = FeedCacheStore.buildKey(
-        categoryCode: selectedCategory?.code,
+        categoryCodes: selectedCategories.map((c) => c.code).toList(),
         sortOption: sortOption,
         excludeCrossListed: excludeCrossListed,
       );
@@ -485,7 +524,7 @@ class _HomePageState extends State<HomePage> {
     _lastAdvancedSummary = "";
     final category = categoryFromSearchInput(query);
     if (category != null) {
-      selectedCategory = category;
+      selectedCategories = [category];
       searchTermController.clear();
     } else {
       searchTermController.text = query;
@@ -494,15 +533,15 @@ class _HomePageState extends State<HomePage> {
     _scrollToTop();
   }
 
-  Future<void> searchCategory(ArxivCategory category) async {
+  Future<void> setCategories(List<ArxivCategory> categories) async {
     if (categoryFromSearchInput(searchTermController.text) != null) {
       searchTermController.clear();
     }
-    selectedCategory = category;
+    selectedCategories = List<ArxivCategory>.from(categories);
     if (_activeAdvancedQuery != null) {
       _activeAdvancedQuery = ArxivAdvancedQuery(
         terms: _activeAdvancedQuery!.terms,
-        category: category,
+        categories: selectedCategories,
         includeCrossList: _activeAdvancedQuery!.includeCrossList,
         dateFilterMode: _activeAdvancedQuery!.dateFilterMode,
         specificYear: _activeAdvancedQuery!.specificYear,
@@ -516,21 +555,33 @@ class _HomePageState extends State<HomePage> {
     _scrollToTop();
   }
 
+  Future<void> toggleCategory(ArxivCategory category) async {
+    final next = List<ArxivCategory>.from(selectedCategories);
+    final idx = next.indexWhere((c) => c.code == category.code);
+    if (idx >= 0) {
+      next.removeAt(idx);
+    } else {
+      next.add(category);
+    }
+    await setCategories(next);
+  }
+
   Future<void> searchCategoryByCode(String code) async {
     final category = categoryByCode(code);
     if (category != null) {
-      await searchCategory(category);
+      await toggleCategory(category);
       return;
     }
     await runFeedSearch("cat:$code");
   }
 
   Future<void> clearCategoryFilter() async {
-    selectedCategory = null;
+    selectedCategories = [];
     if (_activeAdvancedQuery != null) {
       final remaining = ArxivAdvancedQuery(
         terms: _activeAdvancedQuery!.terms,
         category: null,
+        categories: const [],
         includeCrossList: _activeAdvancedQuery!.includeCrossList,
         dateFilterMode: _activeAdvancedQuery!.dateFilterMode,
         specificYear: _activeAdvancedQuery!.specificYear,
@@ -587,7 +638,7 @@ class _HomePageState extends State<HomePage> {
           sortOption = advancedQuery.sortOption;
           maxContent = advancedQuery.pageSize;
           paginationGap = advancedQuery.pageSize;
-          selectedCategory = advancedQuery.category;
+          selectedCategories = advancedQuery.effectiveCategories;
           _activeAdvancedQuery = advancedQuery;
           _lastAdvancedSummary = summary;
           if (summary.isEmpty) {
@@ -599,13 +650,6 @@ class _HomePageState extends State<HomePage> {
         await search(resetPagination: true);
         _scrollToTop();
       },
-    );
-  }
-
-  Future<ArxivSearchResult> suggestedPapers() async {
-    return Arxiv.suggestWithMetadata(
-      pageSize: maxContent,
-      sortOption: sortOption,
     );
   }
 
@@ -700,7 +744,72 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     searchTermController.addListener(_onSearchTermChanged);
+    _appLinksChannel.setMethodCallHandler((call) async {
+      if (call.method == "onLink" && call.arguments is String) {
+        await _handleIncomingArxivLink(call.arguments as String);
+      }
+    });
     _initializeAndLoadFeed();
+  }
+
+  Future<void> _handleIncomingArxivLink(String rawUrl) async {
+    final trimmed = rawUrl.trim();
+    if (trimmed.isEmpty || !mounted) return;
+
+    final uri = Uri.tryParse(trimmed);
+    if (uri != null && uri.pathSegments.length >= 2 && uri.pathSegments.first == "list") {
+      final category = categoryByCode(uri.pathSegments[1]);
+      if (category != null) {
+        await setCategories([category]);
+        return;
+      }
+    }
+
+    final arxivId = Arxiv.extractArxivId(trimmed);
+    if (arxivId == null) return;
+
+    if (uri != null && uri.path.startsWith("/pdf/")) {
+      await parseAndLaunchURL(trimmed, "arXiv:$arxivId");
+      return;
+    }
+
+    final normTarget = ReadPapersStore.normalizeId(arxivId);
+    Paper? localMatch;
+    final bookmarks = await BookmarksStore().loadBookmarks();
+    for (final p in [...data, ..._cachedFeedPapers, ...bookmarks]) {
+      if (ReadPapersStore.normalizeId(p.id) == normTarget) {
+        localMatch = p;
+        break;
+      }
+    }
+    if (localMatch != null) {
+      await openPaperDetails(localMatch);
+      return;
+    }
+
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text("Opening arXiv:$arxivId..."),
+        duration: const Duration(seconds: 6),
+      ),
+    );
+
+    final result = await Arxiv.searchWithMetadata(arxivId, pageSize: 1);
+    if (!mounted) return;
+    messenger.hideCurrentSnackBar();
+
+    if (result.errorMessage == null && result.papers.isNotEmpty) {
+      await openPaperDetails(result.papers.first);
+      return;
+    }
+
+    if (result.errorMessage != null) {
+      messenger.showSnackBar(SnackBar(content: Text(result.errorMessage!)));
+    }
+    await runFeedSearch(arxivId);
   }
 
   Future<void> _initializeAndLoadFeed() async {
@@ -718,9 +827,10 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         searchTermController.text =
             settings.restoreSearchFilter ? lastState.query : "";
-        selectedCategory = lastState.categoryCode != null
-            ? categoryByCode(lastState.categoryCode!)
-            : null;
+        selectedCategories = lastState.effectiveCategoryCodes
+            .map(categoryByCode)
+            .whereType<ArxivCategory>()
+            .toList();
         sortOption = lastState.sortOption;
         startPagination =
             settings.restoreSearchFilter ? lastState.startPagination : 0;
@@ -734,10 +844,21 @@ class _HomePageState extends State<HomePage> {
     }
 
     await search();
+
+    try {
+      final initialLink =
+          await _appLinksChannel.invokeMethod<String>("getInitialLink");
+      if (initialLink != null && initialLink.isNotEmpty) {
+        await _handleIncomingArxivLink(initialLink);
+      }
+    } catch (_) {
+      // Ignore when running on non-Android platforms or widget tests.
+    }
   }
 
   @override
   void dispose() {
+    _wheelPullUpTimer?.cancel();
     searchTermController.removeListener(_onSearchTermChanged);
     searchTermController.dispose();
     _feedScrollController.dispose();
@@ -1076,7 +1197,34 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  void _handlePointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    if (!_canLoadMore || _isLoadingMore || !_feedScrollController.hasClients) {
+      return;
+    }
+    final pos = _feedScrollController.position;
+    final atBottom = pos.pixels >= pos.maxScrollExtent - 2.0;
+
+    if (atBottom && event.scrollDelta.dy > 0) {
+      _updatePullUpOverscroll(
+        _pullUpOverscrollNotifier.value + event.scrollDelta.dy * 0.65,
+      );
+      _wheelPullUpTimer?.cancel();
+      _wheelPullUpTimer = Timer(
+        const Duration(milliseconds: 260),
+        _finishPullUpGesture,
+      );
+    } else if (event.scrollDelta.dy < 0 &&
+        _pullUpOverscrollNotifier.value > 0.0) {
+      _wheelPullUpTimer?.cancel();
+      _updatePullUpOverscroll(
+        _pullUpOverscrollNotifier.value + event.scrollDelta.dy * 0.65,
+      );
+    }
+  }
+
   void _finishPullUpGesture() {
+    _wheelPullUpTimer?.cancel();
     _isDraggingPullUp = false;
     final shouldLoad =
         _pullUpOverscrollNotifier.value >= _pullUpTriggerDistance &&
@@ -1120,6 +1268,189 @@ class _HomePageState extends State<HomePage> {
       _finishPullUpGesture();
     }
     return false;
+  }
+
+  String? _matchedFullGroupName() {
+    if (selectedCategories.length < 2) return null;
+    final selectedCodes = selectedCategories.map((c) => c.code).toSet();
+    final grouped = groupedArxivCategories();
+    for (final entry in grouped.entries) {
+      final groupCodes = entry.value.map((c) => c.code).toSet();
+      if (groupCodes.length == selectedCodes.length &&
+          groupCodes.containsAll(selectedCodes)) {
+        return entry.key;
+      }
+    }
+    return null;
+  }
+
+  Widget _buildActiveFilterChips(ColorScheme colorScheme) {
+    final fullGroup = _matchedFullGroupName();
+    final chips = <Widget>[];
+
+    if (fullGroup != null) {
+      chips.add(
+        InputChip(
+          label: Text("$fullGroup (${selectedCategories.length})"),
+          selected: true,
+          onPressed: () {
+            showCategoryPickerSheet(
+              context,
+              currentQuery: searchTermController.text.trim(),
+              selectedCategories: selectedCategories,
+              onCategoriesChanged: setCategories,
+            );
+          },
+          onDeleted: clearCategoryFilter,
+          visualDensity: VisualDensity.compact,
+        ),
+      );
+    } else if (selectedCategories.length <= 2) {
+      for (final cat in selectedCategories) {
+        chips.add(
+          InputChip(
+            label: Text(categoryFilterLabel(cat)),
+            selected: true,
+            onPressed: () => toggleCategory(cat),
+            onDeleted: () => toggleCategory(cat),
+            visualDensity: VisualDensity.compact,
+          ),
+        );
+      }
+    } else {
+      for (final cat in selectedCategories.take(2)) {
+        chips.add(
+          InputChip(
+            label: Text(categoryFilterLabel(cat)),
+            selected: true,
+            onPressed: () => toggleCategory(cat),
+            onDeleted: () => toggleCategory(cat),
+            visualDensity: VisualDensity.compact,
+          ),
+        );
+      }
+      final extraCount = selectedCategories.length - 2;
+      chips.add(
+        InputChip(
+          label: Text("+$extraCount more"),
+          selected: true,
+          onPressed: () {
+            showCategoryPickerSheet(
+              context,
+              currentQuery: searchTermController.text.trim(),
+              selectedCategories: selectedCategories,
+              onCategoriesChanged: setCategories,
+            );
+          },
+          onDeleted: clearCategoryFilter,
+          visualDensity: VisualDensity.compact,
+        ),
+      );
+    }
+
+    if (_activeAdvancedQuery != null) {
+      chips.add(
+        InputChip(
+          avatar: const Icon(Icons.tune_rounded, size: 16.0),
+          label: const Text("Advanced search"),
+          selected: true,
+          onPressed: _openAdvancedSearch,
+          onDeleted: _clearAdvancedSearch,
+          visualDensity: VisualDensity.compact,
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12.0, 0.0, 12.0, 6.0),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (var i = 0; i < chips.length; i++) ...[
+              if (i > 0) const SizedBox(width: 8.0),
+              chips[i],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  static const _recommendedCategoryCodes = [
+    "astro-ph.CO",
+    "astro-ph.GA",
+    "astro-ph.HE",
+    "cs.AI",
+    "cs.LG",
+    "cs.CL",
+    "quant-ph",
+    "hep-th",
+    "stat.ML",
+  ];
+
+  Widget _buildCategoryPromptView(ColorScheme colorScheme) {
+    final recommended = _recommendedCategoryCodes
+        .map(categoryByCode)
+        .whereType<ArxivCategory>()
+        .toList();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20.0, 56.0, 20.0, 32.0),
+      child: Column(
+        children: [
+          Icon(
+            Icons.category_outlined,
+            size: 46.0,
+            color: colorScheme.primary,
+          ),
+          const SizedBox(height: 14.0),
+          Text(
+            "Select a Category",
+            style: TextStyle(
+              fontSize: 18.0,
+              fontWeight: FontWeight.w700,
+              color: colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 8.0),
+          Text(
+            "Pick one or more arXiv categories below to load the latest papers, or browse all fields.",
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13.5,
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 20.0),
+          Wrap(
+            spacing: 8.0,
+            runSpacing: 8.0,
+            alignment: WrapAlignment.center,
+            children: recommended.map((category) {
+              return ActionChip(
+                label: Text(category.code),
+                tooltip: category.label,
+                onPressed: () => toggleCategory(category),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 20.0),
+          FilledButton.tonalIcon(
+            onPressed: () {
+              showCategoryPickerSheet(
+                context,
+                currentQuery: searchTermController.text.trim(),
+                selectedCategories: selectedCategories,
+                onCategoriesChanged: setCategories,
+              );
+            },
+            icon: const Icon(Icons.apps_rounded, size: 18.0),
+            label: const Text("Browse all categories"),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -1186,6 +1517,7 @@ class _HomePageState extends State<HomePage> {
       body: Stack(
         children: [
           Listener(
+            onPointerSignal: _handlePointerSignal,
             onPointerMove: _handlePointerMove,
             onPointerUp: (_) => _finishPullUpGesture(),
             onPointerCancel: (_) => _finishPullUpGesture(),
@@ -1225,54 +1557,14 @@ class _HomePageState extends State<HomePage> {
                           searchFunction: search,
                           sortOption: sortOption,
                           onSortOptionChanged: changeSortOption,
-                          onCategorySelected: searchCategory,
+                          onCategoriesChanged: setCategories,
                           onClearCategory: clearCategoryFilter,
                           onOpenAdvancedSearch: _openAdvancedSearch,
-                          selectedCategory: selectedCategory,
+                          selectedCategories: selectedCategories,
                         ),
-                        if (selectedCategory != null ||
+                        if (selectedCategories.isNotEmpty ||
                             _activeAdvancedQuery != null)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(
-                              12.0,
-                              0.0,
-                              12.0,
-                              6.0,
-                            ),
-                            child: Row(
-                              children: [
-                                if (selectedCategory != null)
-                                  InputChip(
-                                    label: Text(
-                                      categoryFilterLabel(selectedCategory!),
-                                    ),
-                                    selected: true,
-                                    onDeleted: clearCategoryFilter,
-                                    visualDensity: VisualDensity.compact,
-                                  ),
-                                if (selectedCategory != null &&
-                                    _activeAdvancedQuery != null)
-                                  const SizedBox(width: 8.0),
-                                if (_activeAdvancedQuery != null)
-                                  Flexible(
-                                    child: InputChip(
-                                      avatar: const Icon(
-                                        Icons.tune_rounded,
-                                        size: 16.0,
-                                      ),
-                                      label: const Text(
-                                        "Advanced search",
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      selected: true,
-                                      onPressed: _openAdvancedSearch,
-                                      onDeleted: _clearAdvancedSearch,
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
+                          _buildActiveFilterChips(colorScheme),
                         if (!isHomeScreenLoading &&
                             homeScreenError == null &&
                             data.isNotEmpty &&
@@ -1393,6 +1685,10 @@ class _HomePageState extends State<HomePage> {
                           ],
                         ),
                       ),
+                    )
+                  else if (data.isEmpty && !_hasActiveSearchOrFilter)
+                    SliverToBoxAdapter(
+                      child: _buildCategoryPromptView(colorScheme),
                     )
                   else if (data.isEmpty)
                     const SliverToBoxAdapter(

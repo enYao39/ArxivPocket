@@ -46,6 +46,7 @@ class LastFeedState {
   const LastFeedState({
     this.query = "",
     this.categoryCode,
+    this.categoryCodes = const [],
     this.sortOption = ArxivSortOption.newest,
     this.startPagination = 0,
     this.pageSize = 30,
@@ -55,11 +56,20 @@ class LastFeedState {
 
   final String query;
   final String? categoryCode;
+  final List<String> categoryCodes;
   final ArxivSortOption sortOption;
   final int startPagination;
   final int pageSize;
   final int visibleCount;
   final double scrollOffset;
+
+  List<String> get effectiveCategoryCodes {
+    if (categoryCodes.isNotEmpty) return categoryCodes;
+    if (categoryCode != null && categoryCode!.trim().isNotEmpty) {
+      return [categoryCode!.trim()];
+    }
+    return const [];
+  }
 }
 
 class MainPageStyleStore {
@@ -72,6 +82,7 @@ class MainPageStyleStore {
   static const excludeCrossListedKey = "excludeCrossListed";
   static const lastQueryKey = "lastQuery";
   static const lastCategoryCodeKey = "lastCategoryCode";
+  static const lastCategoryCodesKey = "lastCategoryCodes";
   static const lastSortOptionKey = "lastSortOption";
   static const lastStartPaginationKey = "lastStartPagination";
   static const lastPageSizeKey = "lastPageSize";
@@ -133,6 +144,15 @@ class MainPageStyleStore {
     final box = await Hive.openBox(boxName);
     final query = box.get(lastQueryKey)?.toString() ?? "";
     final categoryCode = box.get(lastCategoryCodeKey)?.toString();
+    final rawCategoryCodes = box.get(lastCategoryCodesKey);
+    final categoryCodes = rawCategoryCodes is List
+        ? rawCategoryCodes
+              .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty)
+              .toList()
+        : (categoryCode != null && categoryCode.isNotEmpty
+              ? [categoryCode]
+              : <String>[]);
     final sortName = box.get(lastSortOptionKey)?.toString();
     final startPagination = box.get(lastStartPaginationKey);
     final pageSize = box.get(lastPageSizeKey);
@@ -148,9 +168,8 @@ class MainPageStyleStore {
     final resolvedPageSize = pageSize is int && pageSize > 0 ? pageSize : 30;
     return LastFeedState(
       query: query,
-      categoryCode: categoryCode != null && categoryCode.isNotEmpty
-          ? categoryCode
-          : null,
+      categoryCode: categoryCodes.isNotEmpty ? categoryCodes.first : null,
+      categoryCodes: categoryCodes,
       sortOption: sortOption,
       startPagination: startPagination is int && startPagination >= 0
           ? startPagination
@@ -166,9 +185,11 @@ class MainPageStyleStore {
   }
 
   Future<void> saveLastFeedState(LastFeedState state) async {
+    final codes = state.effectiveCategoryCodes;
     final box = await Hive.openBox(boxName);
     await box.put(lastQueryKey, state.query);
-    await box.put(lastCategoryCodeKey, state.categoryCode ?? "");
+    await box.put(lastCategoryCodeKey, codes.isNotEmpty ? codes.first : "");
+    await box.put(lastCategoryCodesKey, codes);
     await box.put(lastSortOptionKey, state.sortOption.name);
     await box.put(lastStartPaginationKey, state.startPagination);
     await box.put(lastPageSizeKey, state.pageSize);

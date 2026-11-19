@@ -8,8 +8,10 @@ Future<void> showCategoryPickerSheet(
   BuildContext context, {
   required String currentQuery,
   ArxivCategory? selectedCategory,
+  List<ArxivCategory> selectedCategories = const [],
   VoidCallback? onClearCategory,
-  required ValueChanged<ArxivCategory> onCategorySelected,
+  ValueChanged<ArxivCategory>? onCategorySelected,
+  ValueChanged<List<ArxivCategory>>? onCategoriesChanged,
 }) {
   return showAppBottomSheet<void>(
     context,
@@ -18,17 +20,27 @@ Future<void> showCategoryPickerSheet(
         return CategoryPickerSheet(
           currentQuery: currentQuery,
           selectedCategory: selectedCategory,
+          selectedCategories: selectedCategories,
+          multiSelect: onCategoriesChanged != null,
           onClearCategory: onClearCategory == null
               ? null
               : () {
                   Navigator.pop(sheetContext);
                   onClearCategory();
                 },
-          onCategorySelected: (category) {
-            // Close the sheet before triggering search so the feed updates underneath.
-            Navigator.pop(sheetContext);
-            onCategorySelected(category);
-          },
+          onCategorySelected: onCategorySelected == null
+              ? null
+              : (category) {
+                  // Close the sheet before triggering search so the feed updates underneath.
+                  Navigator.pop(sheetContext);
+                  onCategorySelected(category);
+                },
+          onCategoriesChanged: onCategoriesChanged == null
+              ? null
+              : (categories) {
+                  Navigator.pop(sheetContext);
+                  onCategoriesChanged(categories);
+                },
         );
       },
     ),
@@ -40,14 +52,20 @@ class CategoryPickerSheet extends StatefulWidget {
     super.key,
     required this.currentQuery,
     this.selectedCategory,
+    this.selectedCategories = const [],
+    this.multiSelect = false,
     this.onClearCategory,
-    required this.onCategorySelected,
+    this.onCategorySelected,
+    this.onCategoriesChanged,
   });
 
   final String currentQuery;
   final ArxivCategory? selectedCategory;
+  final List<ArxivCategory> selectedCategories;
+  final bool multiSelect;
   final VoidCallback? onClearCategory;
-  final ValueChanged<ArxivCategory> onCategorySelected;
+  final ValueChanged<ArxivCategory>? onCategorySelected;
+  final ValueChanged<List<ArxivCategory>>? onCategoriesChanged;
 
   @override
   State<CategoryPickerSheet> createState() => _CategoryPickerSheetState();
@@ -56,7 +74,63 @@ class CategoryPickerSheet extends StatefulWidget {
 class _CategoryPickerSheetState extends State<CategoryPickerSheet> {
   final TextEditingController _filterController = TextEditingController();
   final Set<String> _expandedGroups = <String>{};
+  late List<ArxivCategory> _selected;
   String _filterText = "";
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = widget.selectedCategories.isNotEmpty
+        ? List<ArxivCategory>.from(widget.selectedCategories)
+        : (widget.selectedCategory != null
+              ? [widget.selectedCategory!]
+              : <ArxivCategory>[]);
+  }
+
+  bool _isSelected(ArxivCategory category) {
+    if (widget.multiSelect) {
+      return _selected.any((c) => c.code == category.code);
+    }
+    return isCategorySelected(
+      category,
+      widget.currentQuery,
+      selectedCategory: widget.selectedCategory,
+    );
+  }
+
+  void _toggleCategory(ArxivCategory category) {
+    if (!widget.multiSelect) {
+      widget.onCategorySelected?.call(category);
+      return;
+    }
+    setState(() {
+      final idx = _selected.indexWhere((c) => c.code == category.code);
+      if (idx >= 0) {
+        _selected.removeAt(idx);
+      } else {
+        _selected.add(category);
+      }
+    });
+  }
+
+  void _toggleEntireGroup(List<ArxivCategory> groupCategories) {
+    if (!widget.multiSelect) return;
+    final allSelected = groupCategories.every(
+      (cat) => _selected.any((s) => s.code == cat.code),
+    );
+    setState(() {
+      if (allSelected) {
+        final groupCodes = groupCategories.map((c) => c.code).toSet();
+        _selected.removeWhere((s) => groupCodes.contains(s.code));
+      } else {
+        for (final cat in groupCategories) {
+          if (!_selected.any((s) => s.code == cat.code)) {
+            _selected.add(cat);
+          }
+        }
+      }
+    });
+  }
 
   void _toggleGroup(String group) {
     setState(() {
@@ -146,7 +220,32 @@ class _CategoryPickerSheetState extends State<CategoryPickerSheet> {
                     ),
                   ),
                 ),
-                if (hasActiveCategory && widget.onClearCategory != null) ...[
+                if (widget.multiSelect) ...[
+                  if (_selected.isNotEmpty) ...[
+                    const SizedBox(width: 6.0),
+                    TextButton(
+                      onPressed: () {
+                        setState(() {
+                          _selected.clear();
+                        });
+                      },
+                      child: const Text("Clear"),
+                    ),
+                  ],
+                  const SizedBox(width: 6.0),
+                  FilledButton.tonal(
+                    onPressed: () {
+                      widget.onCategoriesChanged?.call(
+                        List<ArxivCategory>.from(_selected),
+                      );
+                    },
+                    child: Text(
+                      _selected.isEmpty
+                          ? "Done"
+                          : "Done (${_selected.length})",
+                    ),
+                  ),
+                ] else if (hasActiveCategory && widget.onClearCategory != null) ...[
                   const SizedBox(width: 8.0),
                   TextButton(
                     onPressed: widget.onClearCategory,
@@ -176,25 +275,21 @@ class _CategoryPickerSheetState extends State<CategoryPickerSheet> {
                             expanded:
                                 _filterText.trim().isNotEmpty ||
                                 _expandedGroups.contains(entry.key),
-                            hasSelected: entry.value.any(
-                              (category) => isCategorySelected(
-                                category,
-                                widget.currentQuery,
-                                selectedCategory: widget.selectedCategory,
-                              ),
-                            ),
+                            hasSelected: entry.value.any(_isSelected),
+                            allSelected:
+                                widget.multiSelect &&
+                                entry.value.isNotEmpty &&
+                                entry.value.every(_isSelected),
+                            onToggleAll: widget.multiSelect
+                                ? () => _toggleEntireGroup(entry.value)
+                                : null,
                             onToggle: () => _toggleGroup(entry.key),
                             children: [
                               for (final category in entry.value)
                                 _CategoryPickerRow(
                                   category: category,
-                                  selected: isCategorySelected(
-                                    category,
-                                    widget.currentQuery,
-                                    selectedCategory: widget.selectedCategory,
-                                  ),
-                                  onTap: () =>
-                                      widget.onCategorySelected(category),
+                                  selected: _isSelected(category),
+                                  onTap: () => _toggleCategory(category),
                                 ),
                             ],
                           ),
@@ -214,6 +309,8 @@ class _CategorySectionGroup extends StatelessWidget {
     required this.count,
     required this.expanded,
     required this.hasSelected,
+    this.allSelected = false,
+    this.onToggleAll,
     required this.onToggle,
     required this.children,
   });
@@ -222,6 +319,8 @@ class _CategorySectionGroup extends StatelessWidget {
   final int count;
   final bool expanded;
   final bool hasSelected;
+  final bool allSelected;
+  final VoidCallback? onToggleAll;
   final VoidCallback onToggle;
   final List<Widget> children;
 
@@ -266,6 +365,35 @@ class _CategorySectionGroup extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (onToggleAll != null) ...[
+                    InkWell(
+                      onTap: onToggleAll,
+                      borderRadius: BorderRadius.circular(10.0),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8.0,
+                          vertical: 3.0,
+                        ),
+                        decoration: BoxDecoration(
+                          color: allSelected
+                              ? colorScheme.primaryContainer
+                              : colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(10.0),
+                        ),
+                        child: Text(
+                          allSelected ? "All ✓" : "Select all",
+                          style: TextStyle(
+                            fontSize: 11.0,
+                            fontWeight: FontWeight.w600,
+                            color: allSelected
+                                ? colorScheme.onPrimaryContainer
+                                : colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8.0),
+                  ],
                   Icon(
                     expanded ? Icons.expand_less : Icons.expand_more,
                     size: 18.0,

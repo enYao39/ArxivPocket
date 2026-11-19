@@ -75,6 +75,7 @@ class ArxivAdvancedQuery {
   const ArxivAdvancedQuery({
     this.terms = const [ArxivSearchTermRow()],
     this.category,
+    this.categories = const [],
     this.includeCrossList = true,
     this.dateFilterMode = ArxivDateFilterMode.allDates,
     this.specificYear,
@@ -86,6 +87,7 @@ class ArxivAdvancedQuery {
 
   final List<ArxivSearchTermRow> terms;
   final ArxivCategory? category;
+  final List<ArxivCategory> categories;
   final bool includeCrossList;
   final ArxivDateFilterMode dateFilterMode;
   final int? specificYear;
@@ -94,18 +96,24 @@ class ArxivAdvancedQuery {
   final ArxivSortOption sortOption;
   final int pageSize;
 
+  List<ArxivCategory> get effectiveCategories {
+    if (categories.isNotEmpty) return categories;
+    if (category != null) return [category!];
+    return const [];
+  }
+
   List<ArxivSearchTermRow> get activeTerms =>
       terms.where((t) => t.term.trim().isNotEmpty).toList();
 
   bool get hasAnyCriteria =>
       activeTerms.isNotEmpty ||
-      category != null ||
+      effectiveCategories.isNotEmpty ||
       dateFilterMode != ArxivDateFilterMode.allDates;
 
   String summaryLabel() {
     final active = activeTerms;
     if (active.isEmpty) {
-      return category != null ? "" : "Advanced filter";
+      return effectiveCategories.isNotEmpty ? "" : "Advanced filter";
     }
     return active
         .asMap()
@@ -164,15 +172,29 @@ class ArxivWebSearch {
   }) {
     final params = <String, String>{"advanced": ""};
 
-    final effectiveTerms = <ArxivSearchTermRow>[...query.activeTerms];
-    if (query.category != null) {
+    final effectiveTerms = <ArxivSearchTermRow>[];
+    final selectedCats = query.effectiveCategories;
+    if (selectedCats.length == 1) {
+      effectiveTerms.addAll(query.activeTerms);
       effectiveTerms.add(
         ArxivSearchTermRow(
           operator: ArxivSearchOperator.and,
-          term: query.category!.code,
+          term: selectedCats.first.code,
           field: ArxivSearchField.crossListCategory,
         ),
       );
+    } else {
+      for (var i = 0; i < selectedCats.length; i++) {
+        effectiveTerms.add(
+          ArxivSearchTermRow(
+            operator:
+                i == 0 ? ArxivSearchOperator.and : ArxivSearchOperator.or,
+            term: selectedCats[i].code,
+            field: ArxivSearchField.crossListCategory,
+          ),
+        );
+      }
+      effectiveTerms.addAll(query.activeTerms);
     }
     if (effectiveTerms.isEmpty) {
       effectiveTerms.add(const ArxivSearchTermRow(term: ""));
@@ -232,8 +254,7 @@ class ArxivWebSearch {
 
       if (filterPrimaryCategory != null &&
           filterPrimaryCategory.trim().isNotEmpty &&
-          paper.primaryCategory.toLowerCase() !=
-              filterPrimaryCategory.trim().toLowerCase()) {
+          !_matchesPrimaryFilter(paper.primaryCategory, filterPrimaryCategory)) {
         continue;
       }
       papers.add(paper);
@@ -250,6 +271,17 @@ class ArxivWebSearch {
       rawXml: "",
       statusCode: statusCode,
       topic: topic,
+    );
+  }
+
+  static bool _matchesPrimaryFilter(String paperPrimary, String filter) {
+    final lowerPrimary = paperPrimary.trim().toLowerCase();
+    final allowed = filter
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .where((s) => s.isNotEmpty);
+    return allowed.any(
+      (code) => lowerPrimary == code || lowerPrimary.startsWith('$code.'),
     );
   }
 

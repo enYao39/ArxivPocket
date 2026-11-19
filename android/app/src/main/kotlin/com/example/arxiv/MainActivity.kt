@@ -1,5 +1,6 @@
 package com.example.arxiv
 
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
@@ -13,6 +14,7 @@ import java.util.UUID
 class MainActivity : FlutterActivity() {
     companion object {
         private const val TTS_CHANNEL = "com.example.arxiv/aosp_tts"
+        private const val APP_LINKS_CHANNEL = "com.example.arxiv/app_links"
     }
 
     private var tts: TextToSpeech? = null
@@ -23,10 +25,29 @@ class MainActivity : FlutterActivity() {
     private var pendingSpeechRate: Float = 1.0f
     private var lastUtteranceId: String? = null
     private var ttsChannel: MethodChannel? = null
+    private var appLinksChannel: MethodChannel? = null
+    private var pendingInitialLink: String? = null
+    private var isAppLinksReady: Boolean = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        val link = extractArxivLink(intent)
+        if (link != null) {
+            pendingInitialLink = link
+        }
+        appLinksChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, APP_LINKS_CHANNEL).apply {
+            setMethodCallHandler { call, result ->
+                if (call.method == "getInitialLink") {
+                    isAppLinksReady = true
+                    val initial = pendingInitialLink
+                    pendingInitialLink = null
+                    result.success(initial)
+                } else {
+                    result.notImplemented()
+                }
+            }
+        }
         val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, TTS_CHANNEL)
         ttsChannel = channel
 
@@ -189,6 +210,26 @@ class MainActivity : FlutterActivity() {
             chunks.add(remaining)
         }
         return chunks
+    }
+
+    private fun extractArxivLink(intent: Intent?): String? {
+        if (intent?.action != Intent.ACTION_VIEW) return null
+        val data = intent.dataString ?: return null
+        return if (data.contains("arxiv.org", ignoreCase = true)) data else null
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val link = extractArxivLink(intent) ?: return
+        val channel = appLinksChannel
+        if (isAppLinksReady && channel != null) {
+            mainHandler.post {
+                channel.invokeMethod("onLink", link)
+            }
+        } else {
+            pendingInitialLink = link
+        }
     }
 
     override fun onDestroy() {

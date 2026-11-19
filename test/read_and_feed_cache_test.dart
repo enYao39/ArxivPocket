@@ -1,7 +1,9 @@
 import 'dart:io';
 
 import 'package:arxiv/apis/arxiv.dart';
+import 'package:arxiv/data/arxiv_categories.dart';
 import 'package:arxiv/models/paper.dart';
+import 'package:arxiv/services/arxiv_web_search.dart';
 import 'package:arxiv/services/feed_cache_store.dart';
 import 'package:arxiv/services/read_papers_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -120,5 +122,110 @@ void main() {
     final loaded = await store.load(key, nowUtc: nowUtc);
     expect(loaded, isNotNull);
     expect(loaded!.papers.length, 2);
+  });
+
+  test('ArxivAdvancedQuery encodes multi-category OR terms and sorted cache keys',
+      () {
+    final uri = ArxivWebSearch.buildAdvancedSearchUri(
+      const ArxivAdvancedQuery(
+        categories: [
+          ArxivCategory(
+            code: 'astro-ph.CO',
+            label: 'Cosmology',
+            group: 'Astrophysics',
+          ),
+          ArxivCategory(
+            code: 'astro-ph.HE',
+            label: 'High Energy',
+            group: 'Astrophysics',
+          ),
+        ],
+      ),
+    );
+    expect(uri.queryParameters['terms-0-term'], 'astro-ph.CO');
+    expect(uri.queryParameters['terms-0-operator'], 'AND');
+    expect(uri.queryParameters['terms-1-term'], 'astro-ph.HE');
+    expect(uri.queryParameters['terms-1-operator'], 'OR');
+
+    final key1 = FeedCacheStore.buildKey(
+      categoryCodes: ['astro-ph.HE', 'astro-ph.CO'],
+      sortOption: ArxivSortOption.newest,
+      excludeCrossListed: false,
+    );
+    final key2 = FeedCacheStore.buildKey(
+      categoryCodes: ['astro-ph.CO', 'astro-ph.HE'],
+      sortOption: ArxivSortOption.newest,
+      excludeCrossListed: false,
+    );
+    expect(key1, key2);
+  });
+
+  test('FeedCacheStore.loadForCategories merges cached single-category feeds',
+      () async {
+    final store = FeedCacheStore();
+    final nowUtc = DateTime.utc(2026, 11, 17, 12);
+
+    final coPaper = Paper(
+      '2611.10001v1',
+      'Cosmology Paper',
+      'Summary',
+      '2026-11-16',
+      'Author A',
+    );
+    final hePaper = Paper(
+      '2611.10002v1',
+      'High Energy Paper',
+      'Summary',
+      '2026-11-17',
+      'Author B',
+    );
+
+    await store.save(
+      FeedCacheStore.buildKey(
+        categoryCode: 'astro-ph.CO',
+        sortOption: ArxivSortOption.newest,
+        excludeCrossListed: false,
+      ),
+      papers: [coPaper],
+      totalResults: 10,
+      cachedAtUtc: nowUtc,
+    );
+    await store.save(
+      FeedCacheStore.buildKey(
+        categoryCode: 'astro-ph.HE',
+        sortOption: ArxivSortOption.newest,
+        excludeCrossListed: false,
+      ),
+      papers: [hePaper],
+      totalResults: 15,
+      cachedAtUtc: nowUtc,
+    );
+
+    final merged = await store.loadForCategories(
+      categoryCodes: ['astro-ph.CO', 'astro-ph.HE'],
+      sortOption: ArxivSortOption.newest,
+      excludeCrossListed: false,
+      nowUtc: nowUtc,
+    );
+    expect(merged, isNotNull);
+    expect(merged!.papers.map((p) => p.id).toList(), [
+      '2611.10002v1',
+      '2611.10001v1',
+    ]);
+  });
+
+  test('Arxiv.extractArxivId handles www.arxiv.org and query/fragment URLs', () {
+    expect(
+      Arxiv.extractArxivId('https://www.arxiv.org/abs/2611.18337v1?context=astro-ph'),
+      '2611.18337v1',
+    );
+    expect(
+      Arxiv.extractArxivId('https://arxiv.org/abs/2611.18337#abstract'),
+      '2611.18337',
+    );
+    expect(
+      Arxiv.extractArxivId('https://arxiv.org/pdf/2611.18337.pdf?download=1'),
+      '2611.18337',
+    );
   });
 }

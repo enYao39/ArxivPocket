@@ -12,24 +12,32 @@ class SearchBox extends StatelessWidget {
     required this.searchFunction,
     required this.sortOption,
     required this.onSortOptionChanged,
-    required this.onCategorySelected,
+    this.onCategorySelected,
+    this.onCategoriesChanged,
     this.onClearCategory,
     this.onOpenAdvancedSearch,
     this.selectedCategory,
+    this.selectedCategories = const [],
   });
 
   final TextEditingController searchTermController;
   final Future<void> Function({bool? resetPagination}) searchFunction;
   final ArxivSortOption sortOption;
   final Future<void> Function(ArxivSortOption option) onSortOptionChanged;
-  final ValueChanged<ArxivCategory> onCategorySelected;
+  final ValueChanged<ArxivCategory>? onCategorySelected;
+  final ValueChanged<List<ArxivCategory>>? onCategoriesChanged;
   final Future<void> Function()? onClearCategory;
   final VoidCallback? onOpenAdvancedSearch;
   final ArxivCategory? selectedCategory;
+  final List<ArxivCategory> selectedCategories;
+
+  List<ArxivCategory> get _effectiveCategories => selectedCategories.isNotEmpty
+      ? selectedCategories
+      : (selectedCategory != null ? [selectedCategory!] : const []);
 
   Future<void> clearSearchQuery() async {
     searchTermController.clear();
-    // Empty input reloads suggested papers (or active category) instead of running a blank search.
+    // Empty input reloads active categories or category prompt instead of running a blank search.
     await searchFunction(resetPagination: true);
   }
 
@@ -38,12 +46,14 @@ class SearchBox extends StatelessWidget {
       context,
       currentQuery: searchTermController.text.trim(),
       selectedCategory: selectedCategory,
+      selectedCategories: _effectiveCategories,
       onClearCategory: onClearCategory == null
           ? null
           : () {
               onClearCategory!();
             },
       onCategorySelected: onCategorySelected,
+      onCategoriesChanged: onCategoriesChanged,
     );
   }
 
@@ -70,8 +80,10 @@ class SearchBox extends StatelessWidget {
                 cursorColor: colorScheme.primary,
                 style: TextStyle(color: colorScheme.onSurface),
                 decoration: InputDecoration(
-                  hintText: selectedCategory != null
-                      ? "Search in ${selectedCategory!.code}..."
+                  hintText: _effectiveCategories.length == 1
+                      ? "Search in ${_effectiveCategories.first.code}..."
+                      : _effectiveCategories.length > 1
+                      ? "Search in ${_effectiveCategories.length} categories..."
                       : "Search, author, or arXiv ID/URL...",
                   hintStyle: TextStyle(color: colorScheme.onSurfaceVariant),
                   border: InputBorder.none,
@@ -100,7 +112,9 @@ class SearchBox extends StatelessWidget {
             onPressed: () => openCategoryPicker(context),
             icon: Icon(
               Icons.category_outlined,
-              color: selectedCategory != null ? colorScheme.primary : null,
+              color: _effectiveCategories.isNotEmpty
+                  ? colorScheme.primary
+                  : null,
             ),
           ),
           PopupMenuButton<ArxivSortOption>(

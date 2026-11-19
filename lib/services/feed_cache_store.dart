@@ -33,12 +33,21 @@ class FeedCacheStore {
 
   static String buildKey({
     String? categoryCode,
+    List<String> categoryCodes = const [],
     required ArxivSortOption sortOption,
     required bool excludeCrossListed,
   }) {
-    final category = categoryCode?.trim().isNotEmpty == true
-        ? categoryCode!.trim()
-        : "all";
+    final normalized = categoryCodes
+        .map((c) => c.trim())
+        .where((c) => c.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    final category = normalized.isNotEmpty
+        ? normalized.join(",")
+        : (categoryCode?.trim().isNotEmpty == true
+              ? categoryCode!.trim()
+              : "all");
     return "cat:$category|sort:${sortOption.name}|excl:$excludeCrossListed";
   }
 
@@ -125,6 +134,91 @@ class FeedCacheStore {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Loads a cached feed for [categoryCodes]. If the exact combined key is
+  /// missing and multiple categories are selected, merges cached single-category
+  /// feeds when all of them are locally available.
+  Future<CachedFeed?> loadForCategories({
+    required List<String> categoryCodes,
+    required ArxivSortOption sortOption,
+    required bool excludeCrossListed,
+    DateTime? nowUtc,
+  }) async {
+    final normalized = categoryCodes
+        .map((c) => c.trim())
+        .where((c) => c.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    if (normalized.isEmpty) return null;
+
+    final exactKey = buildKey(
+      categoryCodes: normalized,
+      sortOption: sortOption,
+      excludeCrossListed: excludeCrossListed,
+    );
+    final exact = await load(exactKey, nowUtc: nowUtc);
+    if (exact != null) return exact;
+
+    if (normalized.length > 1) {
+      final parts = <CachedFeed>[];
+      for (final code in normalized) {
+        final singleKey = buildKey(
+          categoryCode: code,
+          sortOption: sortOption,
+          excludeCrossListed: excludeCrossListed,
+        );
+        final single = await load(singleKey, nowUtc: nowUtc);
+        if (single == null) return null;
+        parts.add(single);
+      }
+
+      final mergedPapers = <Paper>[];
+      final seen = <String>{};
+      var oldestCachedAt = parts.first.cachedAtUtc;
+      var totalResults = 0;
+
+      for (final part in parts) {
+        if (part.cachedAtUtc.isBefore(oldestCachedAt)) {
+          oldestCachedAt = part.cachedAtUtc;
+        }
+        totalResults += part.totalResults;
+        for (final paper in part.papers) {
+          final normId = ReadPapersStore.normalizeId(paper.id);
+          if (normId.isNotEmpty && seen.add(normId)) {
+            mergedPapers.add(paper);
+          }
+        }
+      }
+
+      mergedPapers.sort((a, b) {
+        switch (sortOption) {
+          case ArxivSortOption.oldest:
+            final dateCmp = a.publishedAt.compareTo(b.publishedAt);
+            return dateCmp != 0 ? dateCmp : a.id.compareTo(b.id);
+          case ArxivSortOption.recentlyUpdated:
+            final updCmp = b.updatedAt.compareTo(a.updatedAt);
+            return updCmp != 0 ? updCmp : b.id.compareTo(a.id);
+          case ArxivSortOption.newest:
+          case ArxivSortOption.relevance:
+            final dateCmp = b.publishedAt.compareTo(a.publishedAt);
+            return dateCmp != 0 ? dateCmp : b.id.compareTo(a.id);
+        }
+      });
+
+      final pruned = _pruneOldPapers(mergedPapers, nowUtc: nowUtc);
+      if (pruned.isEmpty) return null;
+
+      return CachedFeed(
+        key: exactKey,
+        cachedAtUtc: oldestCachedAt,
+        totalResults: totalResults,
+        papers: pruned,
+      );
+    }
+
+    return null;
   }
 
   Future<void> save(

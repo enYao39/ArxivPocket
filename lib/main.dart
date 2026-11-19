@@ -9,6 +9,7 @@ import "package:arxiv/models/paper_note.dart";
 import "package:arxiv/pages/splash_screen.dart";
 import "package:arxiv/theme/app_theme.dart";
 import "package:dynamic_color/dynamic_color.dart";
+import "package:flutter/gestures.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:flutter_tex/flutter_tex.dart";
@@ -112,6 +113,14 @@ class _MyAppState extends State<MyApp> {
             return MaterialApp(
               theme: theme,
               debugShowCheckedModeBanner: false,
+              scrollBehavior: const MaterialScrollBehavior().copyWith(
+                dragDevices: const {
+                  PointerDeviceKind.touch,
+                  PointerDeviceKind.mouse,
+                  PointerDeviceKind.trackpad,
+                  PointerDeviceKind.stylus,
+                },
+              ),
               initialRoute: "/",
               // routes: {"/": (context) => const HomePage()},
               routes: {"/": (context) => const SplashScreen()},
