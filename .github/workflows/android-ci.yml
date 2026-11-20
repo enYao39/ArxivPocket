@@ -169,7 +169,7 @@ jobs:
 
   build-macos-arm64:
     name: Build macOS (ARM64)
-    runs-on: macos-14
+    runs-on: macos-latest
     permissions:
       contents: write
 
