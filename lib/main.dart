@@ -8,8 +8,10 @@ import "package:arxiv/models/paper.dart";
 import "package:arxiv/models/paper_note.dart";
 // import "package:arxiv/pages/home_page.dart";
 import "package:arxiv/pages/splash_screen.dart";
+import "package:arxiv/services/linux_storage_paths.dart";
 import "package:arxiv/theme/app_theme.dart";
 import "package:dynamic_color/dynamic_color.dart";
+import "package:flutter/foundation.dart";
 import "package:flutter/gestures.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
@@ -19,7 +21,13 @@ import "package:theme_provider/theme_provider.dart";
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Hive.initFlutter();
+  if (!kIsWeb && Platform.isLinux) {
+    await LinuxStoragePaths.migrateLegacyData();
+    final hiveDir = await LinuxStoragePaths.hiveDirectory();
+    Hive.init(hiveDir.path);
+  } else {
+    await Hive.initFlutter();
+  }
   Hive.registerAdapter(BookmarkAdapter());
   Hive.registerAdapter(PaperAdapter());
   Hive.registerAdapter(RoleAdapter());
