@@ -231,7 +231,93 @@ class FeedCacheStore {
       );
     }
 
+    // Fallback: filter from any cached superset (e.g. removing 1 subcategory
+    // from a multi-category or full-group selection).
+    final superset = await _loadFromSuperset(
+      targetCodes: normalized,
+      exactKey: exactKey,
+      sortOption: sortOption,
+      excludeCrossListed: excludeCrossListed,
+      nowUtc: nowUtc,
+    );
+    if (superset != null) return superset;
+
     return null;
+  }
+
+  Future<CachedFeed?> _loadFromSuperset({
+    required List<String> targetCodes,
+    required String exactKey,
+    required ArxivSortOption sortOption,
+    required bool excludeCrossListed,
+    DateTime? nowUtc,
+  }) async {
+    try {
+      final box = await _openBox();
+      final currentUtc = nowUtc ?? DateTime.now().toUtc();
+      final suffix = "|sort:${sortOption.name}|excl:$excludeCrossListed";
+      final targetSet = targetCodes.map((c) => c.toLowerCase()).toSet();
+
+      CachedFeed? bestMatch;
+      int? bestExtraCount;
+
+      for (final key in box.keys) {
+        final keyStr = key.toString();
+        if (!keyStr.startsWith("cat:") || !keyStr.endsWith(suffix)) continue;
+        final catPart = keyStr.substring(4, keyStr.length - suffix.length);
+        if (catPart == "all" || catPart.isEmpty) continue;
+        final keyCodes = catPart
+            .split(",")
+            .map((c) => c.trim().toLowerCase())
+            .where((c) => c.isNotEmpty)
+            .toSet();
+        if (!keyCodes.containsAll(targetSet)) continue;
+
+        final loaded = await load(keyStr, nowUtc: currentUtc);
+        if (loaded == null) continue;
+
+        final extraCount = keyCodes.length - targetSet.length;
+        if (bestExtraCount != null && extraCount >= bestExtraCount) continue;
+
+        final filtered = loaded.papers.where((paper) {
+          final primary = paper.primaryCategory.trim().toLowerCase();
+          if (excludeCrossListed) {
+            return targetSet.any(
+              (c) => primary == c || primary.startsWith("$c."),
+            );
+          }
+          if (targetSet.any((c) => primary == c || primary.startsWith("$c."))) {
+            return true;
+          }
+          return paper.categories.any((cat) {
+            final lower = cat.trim().toLowerCase();
+            return targetSet.any((c) => lower == c || lower.startsWith("$c."));
+          });
+        }).toList();
+
+        if (filtered.isEmpty) continue;
+
+        final filteredIds = filtered
+            .map((p) => ReadPapersStore.normalizeId(p.id))
+            .toSet();
+        final filteredNewIds = loaded.newPaperIds
+            .where(filteredIds.contains)
+            .toList();
+
+        bestExtraCount = extraCount;
+        bestMatch = CachedFeed(
+          key: exactKey,
+          cachedAtUtc: loaded.cachedAtUtc,
+          totalResults: filtered.length,
+          papers: filtered,
+          newPaperIds: filteredNewIds,
+        );
+      }
+
+      return bestMatch;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> save(

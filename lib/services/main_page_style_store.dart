@@ -8,6 +8,7 @@ class MainPageStyleSettings {
   const MainPageStyleSettings({
     this.limitAuthors = true,
     this.maxAuthors = defaultMaxAuthors,
+    this.sectorSize = defaultSectorSize,
     this.restoreLastSession = true,
     this.restoreSearchFilter = false,
     this.restoreFeedPosition = false,
@@ -15,9 +16,11 @@ class MainPageStyleSettings {
   });
 
   static const defaultMaxAuthors = 3;
+  static const defaultSectorSize = 25;
 
   final bool limitAuthors;
   final int maxAuthors;
+  final int sectorSize;
   final bool restoreLastSession;
   final bool restoreSearchFilter;
   final bool restoreFeedPosition;
@@ -26,6 +29,7 @@ class MainPageStyleSettings {
   MainPageStyleSettings copyWith({
     bool? limitAuthors,
     int? maxAuthors,
+    int? sectorSize,
     bool? restoreLastSession,
     bool? restoreSearchFilter,
     bool? restoreFeedPosition,
@@ -34,6 +38,7 @@ class MainPageStyleSettings {
     return MainPageStyleSettings(
       limitAuthors: limitAuthors ?? this.limitAuthors,
       maxAuthors: maxAuthors ?? this.maxAuthors,
+      sectorSize: sectorSize ?? this.sectorSize,
       restoreLastSession: restoreLastSession ?? this.restoreLastSession,
       restoreSearchFilter: restoreSearchFilter ?? this.restoreSearchFilter,
       restoreFeedPosition: restoreFeedPosition ?? this.restoreFeedPosition,
@@ -49,8 +54,8 @@ class LastFeedState {
     this.categoryCodes = const [],
     this.sortOption = ArxivSortOption.newest,
     this.startPagination = 0,
-    this.pageSize = 30,
-    this.visibleCount = 30,
+    this.pageSize = 25,
+    this.visibleCount = 25,
     this.scrollOffset = 0.0,
   });
 
@@ -76,6 +81,7 @@ class MainPageStyleStore {
   static const boxName = "mainPageStyleBox";
   static const limitAuthorsKey = "limitAuthors";
   static const maxAuthorsKey = "maxAuthors";
+  static const sectorSizeKey = "sectorSize";
   static const restoreLastSessionKey = "restoreLastSession";
   static const restoreSearchFilterKey = "restoreSearchFilter";
   static const restoreFeedPositionKey = "restoreFeedPosition";
@@ -98,6 +104,7 @@ class MainPageStyleStore {
     final box = await Hive.openBox(boxName);
     final storedLimit = box.get(limitAuthorsKey);
     final storedMax = box.get(maxAuthorsKey);
+    final storedSectorSize = box.get(sectorSizeKey);
     final storedRestore = box.get(restoreLastSessionKey);
     final storedRestoreSearch = box.get(restoreSearchFilterKey);
     final storedRestoreFeedPos = box.get(restoreFeedPositionKey);
@@ -109,6 +116,9 @@ class MainPageStyleStore {
       maxAuthors: storedMax is int && storedMax > 0
           ? storedMax
           : MainPageStyleSettings.defaultMaxAuthors,
+      sectorSize: storedSectorSize is int && storedSectorSize > 0
+          ? storedSectorSize
+          : MainPageStyleSettings.defaultSectorSize,
       restoreLastSession: storedRestore is bool ? storedRestore : true,
       restoreSearchFilter:
           storedRestoreSearch is bool ? storedRestoreSearch : false,
@@ -133,6 +143,7 @@ class MainPageStyleStore {
     final box = await Hive.openBox(boxName);
     await box.put(limitAuthorsKey, settings.limitAuthors);
     await box.put(maxAuthorsKey, settings.maxAuthors);
+    await box.put(sectorSizeKey, settings.sectorSize);
     await box.put(restoreLastSessionKey, settings.restoreLastSession);
     await box.put(restoreSearchFilterKey, settings.restoreSearchFilter);
     await box.put(restoreFeedPositionKey, settings.restoreFeedPosition);
@@ -165,7 +176,7 @@ class MainPageStyleStore {
       orElse: () => ArxivSortOption.newest,
     );
 
-    final resolvedPageSize = pageSize is int && pageSize > 0 ? pageSize : 30;
+    final resolvedPageSize = pageSize is int && pageSize > 0 ? pageSize : 25;
     return LastFeedState(
       query: query,
       categoryCode: categoryCodes.isNotEmpty ? categoryCodes.first : null,

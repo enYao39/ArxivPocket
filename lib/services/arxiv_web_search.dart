@@ -312,6 +312,140 @@ class ArxivWebSearch {
     return ids;
   }
 
+  /// Parses full [Paper] entries and the mailing date from an `/list/<cat>/new`
+  /// HTML page, excluding replacement submissions (and optionally cross-lists).
+  static ({String? announcementDate, List<Paper> papers, Set<String> ids})
+  parseNewListPapersHtml(
+    String html, {
+    bool includeCrossLists = true,
+  }) {
+    String? announcementDate;
+    final dateMatch = RegExp(
+      r'Showing new listings for\s+[A-Za-z]+,\s*(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})',
+      caseSensitive: false,
+    ).firstMatch(html);
+    if (dateMatch != null) {
+      final day = dateMatch.group(1)!.padLeft(2, '0');
+      final month = _monthNumber(dateMatch.group(2)!);
+      final year = dateMatch.group(3)!;
+      if (month != null) {
+        announcementDate = "$year-$month-$day";
+      }
+    }
+
+    var section = html;
+    final replacementMatch = RegExp(
+      r'<h3[^>]*>\s*Replacement',
+      caseSensitive: false,
+    ).firstMatch(section);
+    if (replacementMatch != null) {
+      section = section.substring(0, replacementMatch.start);
+    }
+    if (!includeCrossLists) {
+      final crossMatch = RegExp(
+        r'<h3[^>]*>\s*Cross',
+        caseSensitive: false,
+      ).firstMatch(section);
+      if (crossMatch != null) {
+        section = section.substring(0, crossMatch.start);
+      }
+    }
+
+    final papers = <Paper>[];
+    final ids = <String>{};
+    final entryRegex = RegExp(
+      r'<dt>([\s\S]*?)</dt>\s*<dd>([\s\S]*?)</dd>',
+      caseSensitive: false,
+    );
+    final idRegex = RegExp(
+      r'href\s*=\s*"/abs/(\d{4}\.\d{4,5}|[a-z-]+(?:\.[a-z-]+)?/\d{7})(?:v\d+)?"',
+      caseSensitive: false,
+    );
+    final catCodeRegex = RegExp(r'\(([a-z-]+(?:\.[a-z-]+)?)\)', caseSensitive: false);
+
+    for (final match in entryRegex.allMatches(section)) {
+      final dt = match.group(1)!;
+      final dd = match.group(2)!;
+      final idMatch = idRegex.firstMatch(dt);
+      if (idMatch == null) continue;
+      final id = idMatch.group(1)!.trim();
+      if (id.isEmpty || !ids.add(id)) continue;
+
+      final titleMatch = RegExp(
+        r"<div class=['\x22]list-title[^'\x22]*['\x22]>([\s\S]*?)</div>",
+        caseSensitive: false,
+      ).firstMatch(dd);
+      var rawTitle = titleMatch != null ? _cleanHtmlText(titleMatch.group(1)!) : "";
+      rawTitle = rawTitle.replaceFirst(
+        RegExp(r'^Title:\s*', caseSensitive: false),
+        '',
+      );
+      final title = Paper.parseLatex(rawTitle);
+
+      final authorsSection = RegExp(
+        r"<div class=['\x22]list-authors['\x22]>([\s\S]*?)</div>",
+        caseSensitive: false,
+      ).firstMatch(dd);
+      final authorNames = <String>[];
+      if (authorsSection != null) {
+        for (final a in RegExp(
+          r'<a [^>]*>([\s\S]*?)</a>',
+          caseSensitive: false,
+        ).allMatches(authorsSection.group(1)!)) {
+          final name = _cleanHtmlText(a.group(1)!);
+          if (name.isNotEmpty) authorNames.add(name);
+        }
+      }
+
+      final subjectsSection = RegExp(
+        r"<div class=['\x22]list-subjects['\x22]>([\s\S]*?)</div>",
+        caseSensitive: false,
+      ).firstMatch(dd);
+      final categories = <String>[];
+      if (subjectsSection != null) {
+        for (final c in catCodeRegex.allMatches(subjectsSection.group(1)!)) {
+          final code = c.group(1)!.trim();
+          if (code.isNotEmpty && !categories.contains(code)) {
+            categories.add(code);
+          }
+        }
+      }
+
+      final abstractMatch = RegExp(
+        r"<p class=['\x22]mathjax['\x22]>([\s\S]*?)</p>",
+        caseSensitive: false,
+      ).firstMatch(dd);
+      final summary = abstractMatch != null
+          ? Paper.parseLatex(_cleanHtmlText(abstractMatch.group(1)!))
+          : "";
+
+      papers.add(
+        Paper(
+          id,
+          title,
+          summary,
+          announcementDate ?? "",
+          authorNames.join(", "),
+          abstractUrl: "https://arxiv.org/abs/$id",
+          pdfUrl: "https://arxiv.org/pdf/$id",
+          categories: categories,
+          primaryCategory: categories.isNotEmpty ? categories.first : "",
+          rawEntry: {
+            "author": authorNames
+                .map((name) => {"name": {r"$": name}})
+                .toList(),
+          },
+        ),
+      );
+    }
+
+    return (
+      announcementDate: announcementDate,
+      papers: papers,
+      ids: ids,
+    );
+  }
+
   static bool _matchesPrimaryFilter(String paperPrimary, String filter) {
     final lowerPrimary = paperPrimary.trim().toLowerCase();
     final allowed = filter

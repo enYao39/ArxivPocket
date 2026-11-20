@@ -267,4 +267,34 @@ void main() {
       isFalse,
     );
   });
+
+  test('parseNewListPapersHtml extracts papers and mailing date', () {
+    const html = '''
+      <p>Showing new listings for Friday, 20 November 2026</p>
+      <dl id='articles'>
+      <h3>New submissions</h3>
+      <dt><a href="/abs/2611.25036" id="2611.25036">arXiv:2611.25036</a></dt>
+      <dd>
+        <div class='meta'>
+          <div class='list-title mathjax'><span class='descriptor'>Title:</span> Test Title</div>
+          <div class='list-authors'><a href="/a">Alice</a>, <a href="/b">Bob</a></div>
+          <div class='list-subjects'><span class='descriptor'>Subjects:</span> <span class="primary-subject">Cosmology (astro-ph.CO)</span>; High Energy (hep-ph)</div>
+          <p class='mathjax'>Sample abstract text.</p>
+        </div>
+      </dd>
+      <h3>Replacement submissions</h3>
+      <dt><a href="/abs/2401.00001" id="2401.00001">arXiv:2401.00001</a></dt>
+      <dd><div class='meta'><div class='list-title mathjax'>Old</div></div></dd>
+      </dl>
+    ''';
+    final parsed = ArxivWebSearch.parseNewListPapersHtml(html);
+    expect(parsed.announcementDate, '2026-11-20');
+    expect(parsed.papers.length, 1);
+    expect(parsed.papers.first.id, '2611.25036');
+    expect(parsed.papers.first.title, 'Test Title');
+    expect(parsed.papers.first.authors, 'Alice, Bob');
+    expect(parsed.papers.first.primaryCategory, 'astro-ph.CO');
+    expect(parsed.papers.first.categories, ['astro-ph.CO', 'hep-ph']);
+    expect(parsed.papers.first.summary, 'Sample abstract text.');
+  });
 }

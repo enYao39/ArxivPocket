@@ -39,8 +39,8 @@ class _HomePageState extends State<HomePage> {
   var sourceCodeURL = "https://github.com/enYao39/ArxivPocket";
   var scholarXivURL = "https://ScholarXIV.com";
   int startPagination = 0;
-  int maxContent = 30;
-  int paginationGap = 30;
+  int maxContent = 25;
+  int paginationGap = 25;
   var pdfBaseURL = "https://arxiv.org/pdf";
   ArxivSortOption sortOption = ArxivSortOption.newest;
   List<ArxivCategory> selectedCategories = [];
@@ -114,8 +114,10 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  int get _sectorStep => MainPageStyleStore.notifier.value.sectorSize;
+
   int get _effectivePageSize => _isCacheableBrowseFeed
-      ? ArxivWebSearch.normalizeWebPageSize(maxContent)
+      ? ArxivWebSearch.normalizeWebPageSize(_sectorStep)
       : maxContent;
 
   void _saveCurrentFeedState({double? scrollOffset}) {
@@ -169,7 +171,7 @@ class _HomePageState extends State<HomePage> {
           categories: selectedCategories,
           includeCrossList: !excludeCrossListed,
           sortOption: sortOption,
-          pageSize: ArxivWebSearch.normalizeWebPageSize(maxContent),
+          pageSize: ArxivWebSearch.normalizeWebPageSize(_sectorStep),
         ),
         page: pageOffset,
         filterPrimaryCategory: filterPrimary,
@@ -207,7 +209,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   List<int> _buildInitialBoundaries(int visibleCount) {
-    final step = _effectivePageSize;
+    final step = _sectorStep;
     if (step <= 0 || visibleCount <= step) return [];
     final boundaries = <int>[];
     for (var idx = step; idx < visibleCount; idx += step) {
@@ -271,7 +273,7 @@ class _HomePageState extends State<HomePage> {
       if (!mounted || requestSerial != _searchRequestSerial) return;
 
       if (cached != null && cached.papers.isNotEmpty) {
-        final desiredCount = _pendingRestoreVisibleCount ?? maxContent;
+        final desiredCount = _pendingRestoreVisibleCount ?? _sectorStep;
         _pendingRestoreVisibleCount = null;
         final visibleCount = math.min(
           math.max(desiredCount, 1),
@@ -301,24 +303,36 @@ class _HomePageState extends State<HomePage> {
           return;
         }
 
-        // New arXiv announcement available: fetch fresh page 0 + /list/<cat>/new IDs.
+        // New arXiv announcement available: fetch fresh page 0 + /list/<cat>/new batch.
         final categoryCodes = selectedCategories.map((c) => c.code).toList();
         final freshFuture = _fetchFeedPage(0);
-        final newIdsFuture = Arxiv.fetchNewAnnouncementIds(
-          categoryCodes,
-          includeCrossLists: !excludeCrossListed,
-        );
+        final newBatchFuture = sortOption == ArxivSortOption.newest
+            ? Arxiv.fetchNewAnnouncementBatch(
+                categoryCodes,
+                includeCrossLists: !excludeCrossListed,
+              )
+            : Future.value(null);
         final freshResult = await freshFuture;
-        final fetchedNewIds = await newIdsFuture;
+        final newBatch = await newBatchFuture;
         if (!mounted || requestSerial != _searchRequestSerial) return;
-        if (freshResult.errorMessage == null && freshResult.papers.isNotEmpty) {
+        if (freshResult.errorMessage == null &&
+            (freshResult.papers.isNotEmpty ||
+                (newBatch?.papers.isNotEmpty ?? false))) {
           final nowUtc = DateTime.now().toUtc();
+          final combinedFresh = sortOption == ArxivSortOption.newest &&
+                  newBatch != null &&
+                  newBatch.papers.isNotEmpty
+              ? [...newBatch.papers, ...freshResult.papers]
+              : freshResult.papers;
           final merged = await FeedCacheStore().mergeFreshPage(
             cacheKey,
-            freshPapers: freshResult.papers,
-            totalResults: freshResult.totalResults,
+            freshPapers: combinedFresh,
+            totalResults: math.max(
+              freshResult.totalResults,
+              combinedFresh.length,
+            ),
             fetchedAtUtc: nowUtc,
-            newPaperIds: fetchedNewIds?.toList(),
+            newPaperIds: newBatch?.ids.toList(),
           );
           if (!mounted || requestSerial != _searchRequestSerial) return;
           final nextVisible = math.min(
@@ -351,30 +365,35 @@ class _HomePageState extends State<HomePage> {
     _saveCurrentFeedState(scrollOffset: 0.0);
 
     final resultFuture = _fetchFeedPage(startPagination);
-    final newIdsFuture = isCacheable
-        ? Arxiv.fetchNewAnnouncementIds(
+    final newBatchFuture = isCacheable && sortOption == ArxivSortOption.newest
+        ? Arxiv.fetchNewAnnouncementBatch(
             selectedCategories.map((c) => c.code).toList(),
             includeCrossLists: !excludeCrossListed,
           )
-        : Future<Set<String>?>.value(null);
+        : Future.value(null);
     final result = await resultFuture;
-    final fetchedNewIds = await newIdsFuture;
+    final newBatch = await newBatchFuture;
     if (!mounted || requestSerial != _searchRequestSerial) {
       return;
     }
 
     if (isCacheable && cacheKey != null && result.errorMessage == null) {
       final nowUtc = DateTime.now().toUtc();
+      final combinedFresh = sortOption == ArxivSortOption.newest &&
+              newBatch != null &&
+              newBatch.papers.isNotEmpty
+          ? [...newBatch.papers, ...result.papers]
+          : result.papers;
       final merged = await FeedCacheStore().mergeFreshPage(
         cacheKey,
-        freshPapers: result.papers,
-        totalResults: result.totalResults,
+        freshPapers: combinedFresh,
+        totalResults: math.max(result.totalResults, combinedFresh.length),
         fetchedAtUtc: nowUtc,
-        newPaperIds: fetchedNewIds?.toList(),
+        newPaperIds: newBatch?.ids.toList(),
       );
       if (!mounted || requestSerial != _searchRequestSerial) return;
 
-      final desiredCount = _pendingRestoreVisibleCount ?? maxContent;
+      final desiredCount = _pendingRestoreVisibleCount ?? _sectorStep;
       _pendingRestoreVisibleCount = null;
       final visibleCount = math.min(
         math.max(desiredCount, 1),
@@ -424,7 +443,7 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
-      final pageStep = _effectivePageSize;
+      final pageStep = _sectorStep;
       final nextCount = math.min(
         data.length + pageStep,
         _cachedFeedPapers.length,
@@ -976,10 +995,14 @@ class _HomePageState extends State<HomePage> {
     final latestUtc = ArxivUpdateSchedule.latestAnnouncementUtc(
       DateTime.now().toUtc(),
     );
-    final eastern = ArxivUpdateSchedule.toEasternWallClock(latestUtc);
-    final m = eastern.month.toString().padLeft(2, "0");
-    final d = eastern.day.toString().padLeft(2, "0");
-    return "${eastern.year}-$m-$d";
+    // arXiv's mailing/announcement date on /list/<cat>/recent is the next calendar day
+    // after the 20:00 US/Eastern release.
+    final mailingDay = ArxivUpdateSchedule.toEasternWallClock(
+      latestUtc,
+    ).add(const Duration(days: 1));
+    final m = mailingDay.month.toString().padLeft(2, "0");
+    final d = mailingDay.day.toString().padLeft(2, "0");
+    return "${mailingDay.year}-$m-$d";
   }
 
   Widget _buildNewTodayBanner(
@@ -996,12 +1019,18 @@ class _HomePageState extends State<HomePage> {
     final unreadCount = batchPapers
         .where((p) => !readIds.contains(ReadPapersStore.normalizeId(p.id)))
         .length;
+    final totalNewCount = _newTodayPaperIds.isNotEmpty
+        ? math.max(_newTodayPaperIds.length, batchPapers.length)
+        : batchPapers.length;
+    final loadedNote = totalNewCount > batchPapers.length
+        ? " (${batchPapers.length} loaded · $unreadCount unread)"
+        : " · $unreadCount unread";
     final noAnnouncement =
         ArxivUpdateSchedule.noAnnouncementReason(DateTime.now().toUtc()) !=
             null;
     final label = noAnnouncement
-        ? "Latest batch ($latestDate): ${batchPapers.length} papers · $unreadCount unread"
-        : "New today ($latestDate): ${batchPapers.length} new · $unreadCount unread";
+        ? "Latest batch ($latestDate): $totalNewCount papers$loadedNote"
+        : "New today ($latestDate): $totalNewCount new$loadedNote";
 
     return Container(
       margin: const EdgeInsets.fromLTRB(12.0, 0.0, 12.0, 6.0),
@@ -1094,7 +1123,7 @@ class _HomePageState extends State<HomePage> {
               borderRadius: BorderRadius.circular(10.0),
             ),
             child: Text(
-              "Page $pageNumber · $rangeStart–$rangeEnd",
+              "Sector $pageNumber · $rangeStart–$rangeEnd",
               style: TextStyle(
                 fontSize: 11.5,
                 fontWeight: FontWeight.w600,
@@ -1632,10 +1661,10 @@ class _HomePageState extends State<HomePage> {
       segmentBuffer.clear();
     }
 
+    final step = _sectorStep;
     for (var i = 0; i < data.length; i++) {
-      final pageBoundaryIdx =
-          _isCacheableBrowseFeed ? _pageBoundaries.indexOf(i) : -1;
-      final showPageDivider = pageBoundaryIdx != -1;
+      final showPageDivider =
+          _isCacheableBrowseFeed && step > 0 && i > 0 && i % step == 0;
       final showLastReadDivider =
           _isCacheableBrowseFeed &&
           firstReadIndex > 0 &&
@@ -1644,16 +1673,12 @@ class _HomePageState extends State<HomePage> {
       if (showPageDivider || showLastReadDivider) {
         flushSegment();
         if (showPageDivider) {
-          final nextBoundary =
-              pageBoundaryIdx + 1 < _pageBoundaries.length
-                  ? _pageBoundaries[pageBoundaryIdx + 1]
-                  : data.length;
           rows.add(
             _buildPageDivider(
               colorScheme,
-              pageBoundaryIdx + 2,
+              (i ~/ step) + 1,
               i + 1,
-              nextBoundary,
+              math.min(i + step, data.length),
             ),
           );
         }

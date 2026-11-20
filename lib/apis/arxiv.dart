@@ -226,20 +226,33 @@ class Arxiv {
     );
   }
 
-  static Future<Set<String>?> fetchNewAnnouncementIds(
+  static Future<({String? announcementDate, List<Paper> papers, Set<String> ids})?>
+  fetchNewAnnouncementBatch(
     List<String> categoryCodes, {
     bool includeCrossLists = true,
   }) async {
-    final codes = categoryCodes
+    var codes = categoryCodes
         .map((c) => c.trim())
         .where((c) => c.isNotEmpty)
         .toSet()
         .toList();
-    if (codes.isEmpty || codes.length > 5) {
+    if (codes.isEmpty) {
       return null;
     }
+    if (codes.length > 5) {
+      // Collapse subcategory lists (e.g. all 6 astro-ph.*) to archive prefixes.
+      codes = codes
+          .map((c) => c.contains('.') ? c.split('.').first : c)
+          .toSet()
+          .toList();
+      if (codes.length > 5) {
+        return null;
+      }
+    }
 
-    final combined = <String>{};
+    String? announcementDate;
+    final combinedIds = <String>{};
+    final combinedPapers = <Paper>[];
     var anySucceeded = false;
 
     for (final code in codes) {
@@ -255,19 +268,41 @@ class Arxiv {
         final html = response.data;
         if (response.statusCode == 200 && html != null && html.isNotEmpty) {
           anySucceeded = true;
-          combined.addAll(
-            ArxivWebSearch.parseNewListIdsHtml(
-              html,
-              includeCrossLists: includeCrossLists,
-            ),
+          final parsed = ArxivWebSearch.parseNewListPapersHtml(
+            html,
+            includeCrossLists: includeCrossLists,
           );
+          announcementDate ??= parsed.announcementDate;
+          for (final p in parsed.papers) {
+            if (combinedIds.add(p.id)) {
+              combinedPapers.add(p);
+            }
+          }
+          combinedIds.addAll(parsed.ids);
         }
       } catch (_) {
         // Ignore individual list fetch failures and fall back if needed.
       }
     }
 
-    return anySucceeded ? combined : null;
+    return anySucceeded
+        ? (
+            announcementDate: announcementDate,
+            papers: combinedPapers,
+            ids: combinedIds,
+          )
+        : null;
+  }
+
+  static Future<Set<String>?> fetchNewAnnouncementIds(
+    List<String> categoryCodes, {
+    bool includeCrossLists = true,
+  }) async {
+    final batch = await fetchNewAnnouncementBatch(
+      categoryCodes,
+      includeCrossLists: includeCrossLists,
+    );
+    return batch?.ids;
   }
 
   static Future<ArxivSearchResult> _searchWebUri(

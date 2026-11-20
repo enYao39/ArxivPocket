@@ -419,6 +419,7 @@ class MainPageStyleSettingsPage extends StatefulWidget {
 class _MainPageStyleSettingsPageState extends State<MainPageStyleSettingsPage> {
   final MainPageStyleStore _store = MainPageStyleStore();
   static const _authorLimitOptions = [3, 5, 8];
+  static const _sectorSizeOptions = [25, 50, 100, 200];
 
   @override
   void initState() {
@@ -501,6 +502,51 @@ class _MainPageStyleSettingsPageState extends State<MainPageStyleSettingsPage> {
                 onChanged: (value) {
                   _store.save(settings.copyWith(excludeCrossListed: value));
                 },
+              ),
+              const SizedBox(height: 10.0),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14.0,
+                  vertical: 12.0,
+                ),
+                decoration: BoxDecoration(
+                  color: subtleSurfaceColor(colorScheme),
+                  borderRadius: BorderRadius.circular(10.0),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Papers per sector",
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 2.0),
+                    Text(
+                      "How many entries to show in each section before pulling up for the next.",
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 8.0),
+                    Wrap(
+                      spacing: 8.0,
+                      children: _sectorSizeOptions.map((count) {
+                        final selected = settings.sectorSize == count;
+                        return ChoiceChip(
+                          label: Text("$count"),
+                          selected: selected,
+                          onSelected: (_) {
+                            _store.save(settings.copyWith(sectorSize: count));
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 20.0),
               _SettingsSectionLabel(
