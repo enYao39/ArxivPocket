@@ -193,6 +193,39 @@ class ArxivUpdateSchedule {
     return lastFetchedUtc.toUtc().isBefore(latestWindow);
   }
 
+  /// Returns whether a `YYYY-MM-DD` submission date falls inside the
+  /// submission window for the most recent arXiv announcement.
+  static bool isSubmittedInLatestWindow(
+    String publishedAt, {
+    DateTime? nowUtc,
+  }) {
+    final trimmed = publishedAt.trim();
+    if (trimmed.length < 10) return false;
+    final parsed = DateTime.tryParse(trimmed.substring(0, 10));
+    if (parsed == null) return false;
+
+    final currentUtc = (nowUtc ?? DateTime.now()).toUtc();
+    final latestUtc = latestAnnouncementUtc(currentUtc);
+    final prevUtc = latestAnnouncementUtc(
+      latestUtc.subtract(const Duration(minutes: 1)),
+    );
+
+    final latestEastern = toEasternWallClock(latestUtc);
+    final prevEastern = toEasternWallClock(prevUtc);
+    final startDay = DateTime.utc(
+      prevEastern.year,
+      prevEastern.month,
+      prevEastern.day,
+    );
+    final endDay = DateTime.utc(
+      latestEastern.year,
+      latestEastern.month,
+      latestEastern.day,
+    );
+    final paperDay = DateTime.utc(parsed.year, parsed.month, parsed.day);
+    return !paperDay.isBefore(startDay) && !paperDay.isAfter(endDay);
+  }
+
   /// Formats the remaining time until the next arXiv announcement.
   static String formatTimeUntilNextUpdate(DateTime nowUtc) {
     final nextUtc = nextAnnouncementUtc(nowUtc);

@@ -226,6 +226,50 @@ class Arxiv {
     );
   }
 
+  static Future<Set<String>?> fetchNewAnnouncementIds(
+    List<String> categoryCodes, {
+    bool includeCrossLists = true,
+  }) async {
+    final codes = categoryCodes
+        .map((c) => c.trim())
+        .where((c) => c.isNotEmpty)
+        .toSet()
+        .toList();
+    if (codes.isEmpty || codes.length > 5) {
+      return null;
+    }
+
+    final combined = <String>{};
+    var anySucceeded = false;
+
+    for (final code in codes) {
+      try {
+        final uri = Uri.https(ArxivWebSearch.host, "/list/$code/new");
+        final response = await _runRateLimitedRequest(
+          () => _dio.get<String>(
+            uri.toString(),
+            options: Options(headers: const {"Accept": "text/html"}),
+          ),
+          minInterval: _minimumWebRequestInterval,
+        );
+        final html = response.data;
+        if (response.statusCode == 200 && html != null && html.isNotEmpty) {
+          anySucceeded = true;
+          combined.addAll(
+            ArxivWebSearch.parseNewListIdsHtml(
+              html,
+              includeCrossLists: includeCrossLists,
+            ),
+          );
+        }
+      } catch (_) {
+        // Ignore individual list fetch failures and fall back if needed.
+      }
+    }
+
+    return anySucceeded ? combined : null;
+  }
+
   static Future<ArxivSearchResult> _searchWebUri(
     Uri uri, {
     required int start,

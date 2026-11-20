@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:arxiv/apis/arxiv.dart';
 import 'package:arxiv/data/arxiv_categories.dart';
 import 'package:arxiv/models/paper.dart';
+import 'package:arxiv/services/arxiv_update_schedule.dart';
 import 'package:arxiv/services/arxiv_web_search.dart';
 import 'package:arxiv/services/feed_cache_store.dart';
 import 'package:arxiv/services/read_papers_store.dart';
@@ -226,6 +227,44 @@ void main() {
     expect(
       Arxiv.extractArxivId('https://arxiv.org/pdf/2611.18337.pdf?download=1'),
       '2611.18337',
+    );
+  });
+
+  test('parseNewListIdsHtml excludes replacements and respects includeCrossLists',
+      () {
+    const html = '''
+      <h3>New submissions</h3>
+      <a href="/abs/2611.18337">arXiv:2611.18337</a>
+      <h3>Cross submissions</h3>
+      <a href="/abs/2611.18338">arXiv:2611.18338</a>
+      <h3>Replacement submissions</h3>
+      <a href="/abs/2401.00001">arXiv:2401.00001</a>
+    ''';
+    expect(
+      ArxivWebSearch.parseNewListIdsHtml(html, includeCrossLists: true),
+      {'2611.18337', '2611.18338'},
+    );
+    expect(
+      ArxivWebSearch.parseNewListIdsHtml(html, includeCrossLists: false),
+      {'2611.18337'},
+    );
+  });
+
+  test('ArxivUpdateSchedule.isSubmittedInLatestWindow spans multi-day window',
+      () {
+    // Thursday 2026-11-19 21:00 ET -> Friday 2026-11-20 02:00 UTC
+    final nowUtc = DateTime.utc(2026, 11, 20, 2, 0);
+    expect(
+      ArxivUpdateSchedule.isSubmittedInLatestWindow('2026-11-19', nowUtc: nowUtc),
+      isTrue,
+    );
+    expect(
+      ArxivUpdateSchedule.isSubmittedInLatestWindow('2026-11-18', nowUtc: nowUtc),
+      isTrue,
+    );
+    expect(
+      ArxivUpdateSchedule.isSubmittedInLatestWindow('2026-11-16', nowUtc: nowUtc),
+      isFalse,
     );
   });
 }

@@ -59,6 +59,7 @@ class _HomePageState extends State<HomePage> {
 
   List<Paper> data = [];
   List<Paper> _cachedFeedPapers = [];
+  Set<String> _newTodayPaperIds = {};
   List<int> _pageBoundaries = [];
   int _nextFetchOffset = 0;
   final ValueNotifier<double> _pullUpOverscrollNotifier = ValueNotifier<double>(
@@ -242,6 +243,7 @@ class _HomePageState extends State<HomePage> {
         homeScreenError = null;
         data = [];
         _cachedFeedPapers = [];
+        _newTodayPaperIds = {};
         _pageBoundaries = [];
         lastSearchResult = null;
       });
@@ -278,6 +280,7 @@ class _HomePageState extends State<HomePage> {
 
         setState(() {
           _cachedFeedPapers = cached.papers;
+          _newTodayPaperIds = cached.newPaperIds.toSet();
           data = cached.papers.take(visibleCount).toList();
           _pageBoundaries = _buildInitialBoundaries(data.length);
           _nextFetchOffset = _effectivePageSize;
@@ -298,8 +301,15 @@ class _HomePageState extends State<HomePage> {
           return;
         }
 
-        // New arXiv announcement available: fetch fresh page 0 and merge.
-        final freshResult = await _fetchFeedPage(0);
+        // New arXiv announcement available: fetch fresh page 0 + /list/<cat>/new IDs.
+        final categoryCodes = selectedCategories.map((c) => c.code).toList();
+        final freshFuture = _fetchFeedPage(0);
+        final newIdsFuture = Arxiv.fetchNewAnnouncementIds(
+          categoryCodes,
+          includeCrossLists: !excludeCrossListed,
+        );
+        final freshResult = await freshFuture;
+        final fetchedNewIds = await newIdsFuture;
         if (!mounted || requestSerial != _searchRequestSerial) return;
         if (freshResult.errorMessage == null && freshResult.papers.isNotEmpty) {
           final nowUtc = DateTime.now().toUtc();
@@ -308,6 +318,7 @@ class _HomePageState extends State<HomePage> {
             freshPapers: freshResult.papers,
             totalResults: freshResult.totalResults,
             fetchedAtUtc: nowUtc,
+            newPaperIds: fetchedNewIds?.toList(),
           );
           if (!mounted || requestSerial != _searchRequestSerial) return;
           final nextVisible = math.min(
@@ -316,6 +327,7 @@ class _HomePageState extends State<HomePage> {
           );
           setState(() {
             _cachedFeedPapers = merged.papers;
+            _newTodayPaperIds = merged.newPaperIds.toSet();
             data = merged.papers.take(nextVisible).toList();
             lastSearchResult = freshResult;
             _lastFetchedAtUtc = nowUtc;
@@ -331,13 +343,22 @@ class _HomePageState extends State<HomePage> {
       homeScreenError = null;
       data = [];
       _cachedFeedPapers = [];
+      _newTodayPaperIds = {};
       _pageBoundaries = [];
       _isLoadingMore = false;
     });
 
     _saveCurrentFeedState(scrollOffset: 0.0);
 
-    final result = await _fetchFeedPage(startPagination);
+    final resultFuture = _fetchFeedPage(startPagination);
+    final newIdsFuture = isCacheable
+        ? Arxiv.fetchNewAnnouncementIds(
+            selectedCategories.map((c) => c.code).toList(),
+            includeCrossLists: !excludeCrossListed,
+          )
+        : Future<Set<String>?>.value(null);
+    final result = await resultFuture;
+    final fetchedNewIds = await newIdsFuture;
     if (!mounted || requestSerial != _searchRequestSerial) {
       return;
     }
@@ -349,6 +370,7 @@ class _HomePageState extends State<HomePage> {
         freshPapers: result.papers,
         totalResults: result.totalResults,
         fetchedAtUtc: nowUtc,
+        newPaperIds: fetchedNewIds?.toList(),
       );
       if (!mounted || requestSerial != _searchRequestSerial) return;
 
@@ -360,6 +382,7 @@ class _HomePageState extends State<HomePage> {
       );
       setState(() {
         _cachedFeedPapers = merged.papers;
+        _newTodayPaperIds = merged.newPaperIds.toSet();
         lastSearchResult = result;
         data = merged.papers.take(visibleCount).toList();
         _pageBoundaries = _buildInitialBoundaries(data.length);
@@ -934,19 +957,29 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  bool _isPaperNew(Paper paper) {
+    if (!_isCacheableBrowseFeed || sortOption != ArxivSortOption.newest) {
+      return false;
+    }
+    if (_newTodayPaperIds.isNotEmpty) {
+      return _newTodayPaperIds.contains(ReadPapersStore.normalizeId(paper.id));
+    }
+    return ArxivUpdateSchedule.isSubmittedInLatestWindow(paper.publishedAt);
+  }
+
   String? _latestBatchDate() {
     if (!_isCacheableBrowseFeed ||
         sortOption != ArxivSortOption.newest ||
         data.isEmpty) {
       return null;
     }
-    final firstDate = data.first.publishedAt.trim();
-    if (firstDate.isEmpty) return null;
-    final parsed = DateTime.tryParse(firstDate);
-    if (parsed == null) return null;
-    final age = DateTime.now().toUtc().difference(parsed);
-    if (age.inDays > 5) return null;
-    return firstDate;
+    final latestUtc = ArxivUpdateSchedule.latestAnnouncementUtc(
+      DateTime.now().toUtc(),
+    );
+    final eastern = ArxivUpdateSchedule.toEasternWallClock(latestUtc);
+    final m = eastern.month.toString().padLeft(2, "0");
+    final d = eastern.day.toString().padLeft(2, "0");
+    return "${eastern.year}-$m-$d";
   }
 
   Widget _buildNewTodayBanner(
@@ -957,8 +990,7 @@ class _HomePageState extends State<HomePage> {
     final source = _isCacheableBrowseFeed && _cachedFeedPapers.isNotEmpty
         ? _cachedFeedPapers
         : data;
-    final batchPapers =
-        source.where((p) => p.publishedAt.trim() == latestDate).toList();
+    final batchPapers = source.where(_isPaperNew).toList();
     if (batchPapers.isEmpty) return const SizedBox.shrink();
 
     final unreadCount = batchPapers
@@ -1544,9 +1576,7 @@ class _HomePageState extends State<HomePage> {
         downloadPaper: downloadPaper,
         parseAndLaunchURL: parseAndLaunchURL,
         isBookmarked: false,
-        isNew:
-            latestBatchDate != null &&
-            paper.publishedAt.trim() == latestBatchDate,
+        isNew: _isPaperNew(paper),
         onCardTap: () => openPaperDetails(paper),
         onCategoryTap: searchCategoryByCode,
         notesRefreshToken: notesRefreshToken,

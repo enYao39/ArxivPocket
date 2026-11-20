@@ -274,6 +274,44 @@ class ArxivWebSearch {
     );
   }
 
+  /// Extracts normalized arXiv IDs from a `/list/<cat>/new` HTML page,
+  /// excluding replacement submissions (and optionally cross-lists).
+  static Set<String> parseNewListIdsHtml(
+    String html, {
+    bool includeCrossLists = true,
+  }) {
+    var section = html;
+    final replacementMatch = RegExp(
+      r'<h3[^>]*>\s*Replacement',
+      caseSensitive: false,
+    ).firstMatch(section);
+    if (replacementMatch != null) {
+      section = section.substring(0, replacementMatch.start);
+    }
+    if (!includeCrossLists) {
+      final crossMatch = RegExp(
+        r'<h3[^>]*>\s*Cross',
+        caseSensitive: false,
+      ).firstMatch(section);
+      if (crossMatch != null) {
+        section = section.substring(0, crossMatch.start);
+      }
+    }
+
+    final ids = <String>{};
+    final idRegex = RegExp(
+      r'href="/abs/(\d{4}\.\d{4,5}|[a-z-]+(?:\.[a-z-]+)?/\d{7})(?:v\d+)?"',
+      caseSensitive: false,
+    );
+    for (final match in idRegex.allMatches(section)) {
+      final id = match.group(1)?.trim();
+      if (id != null && id.isNotEmpty) {
+        ids.add(id);
+      }
+    }
+    return ids;
+  }
+
   static bool _matchesPrimaryFilter(String paperPrimary, String filter) {
     final lowerPrimary = paperPrimary.trim().toLowerCase();
     final allowed = filter

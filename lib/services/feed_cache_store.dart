@@ -11,12 +11,14 @@ class CachedFeed {
     required this.cachedAtUtc,
     required this.totalResults,
     required this.papers,
+    this.newPaperIds = const [],
   });
 
   final String key;
   final DateTime cachedAtUtc;
   final int totalResults;
   final List<Paper> papers;
+  final List<String> newPaperIds;
 }
 
 /// Caches category and home browse feeds locally for up to 7 days so
@@ -124,12 +126,20 @@ class FeedCacheStore {
           ? raw["totalResults"] as int
           : int.tryParse(raw["totalResults"]?.toString() ?? "") ??
                 pruned.length;
+      final rawNewIds = raw["newPaperIds"];
+      final newPaperIds = rawNewIds is List
+          ? rawNewIds
+                .map((e) => ReadPapersStore.normalizeId(e.toString()))
+                .where((e) => e.isNotEmpty)
+                .toList()
+          : const <String>[];
 
       return CachedFeed(
         key: key,
         cachedAtUtc: cachedAt.toUtc(),
         totalResults: totalResults,
         papers: pruned,
+        newPaperIds: newPaperIds,
       );
     } catch (_) {
       return null;
@@ -175,6 +185,7 @@ class FeedCacheStore {
       }
 
       final mergedPapers = <Paper>[];
+      final mergedNewIds = <String>{};
       final seen = <String>{};
       var oldestCachedAt = parts.first.cachedAtUtc;
       var totalResults = 0;
@@ -184,6 +195,7 @@ class FeedCacheStore {
           oldestCachedAt = part.cachedAtUtc;
         }
         totalResults += part.totalResults;
+        mergedNewIds.addAll(part.newPaperIds);
         for (final paper in part.papers) {
           final normId = ReadPapersStore.normalizeId(paper.id);
           if (normId.isNotEmpty && seen.add(normId)) {
@@ -215,6 +227,7 @@ class FeedCacheStore {
         cachedAtUtc: oldestCachedAt,
         totalResults: totalResults,
         papers: pruned,
+        newPaperIds: mergedNewIds.toList(),
       );
     }
 
@@ -226,6 +239,7 @@ class FeedCacheStore {
     required List<Paper> papers,
     required int totalResults,
     required DateTime cachedAtUtc,
+    List<String> newPaperIds = const [],
   }) async {
     try {
       final box = await _openBox();
@@ -243,6 +257,11 @@ class FeedCacheStore {
         "cachedAtUtc": cachedAtUtc.toUtc().toIso8601String(),
         "totalResults": totalResults,
         "papers": pruned,
+        "newPaperIds": newPaperIds
+            .map(ReadPapersStore.normalizeId)
+            .where((id) => id.isNotEmpty)
+            .toSet()
+            .toList(),
       });
     } catch (_) {
       // Ignore cache write errors so feed remains usable.
@@ -254,6 +273,7 @@ class FeedCacheStore {
     required List<Paper> freshPapers,
     required int totalResults,
     required DateTime fetchedAtUtc,
+    List<String>? newPaperIds,
   }) async {
     final existing = await load(key, nowUtc: fetchedAtUtc);
     final freshIds = freshPapers
@@ -270,12 +290,14 @@ class FeedCacheStore {
       nowUtc: fetchedAtUtc,
       keepIds: freshIds,
     );
+    final resolvedNewIds = newPaperIds ?? existing?.newPaperIds ?? const [];
 
     await save(
       key,
       papers: pruned,
       totalResults: totalResults,
       cachedAtUtc: fetchedAtUtc,
+      newPaperIds: resolvedNewIds,
     );
 
     return CachedFeed(
@@ -283,6 +305,7 @@ class FeedCacheStore {
       cachedAtUtc: fetchedAtUtc,
       totalResults: totalResults,
       papers: pruned,
+      newPaperIds: resolvedNewIds,
     );
   }
 
@@ -311,6 +334,7 @@ class FeedCacheStore {
       papers: pruned,
       totalResults: totalResults > 0 ? totalResults : existing.totalResults,
       cachedAtUtc: existing.cachedAtUtc,
+      newPaperIds: existing.newPaperIds,
     );
   }
 
